@@ -21,6 +21,12 @@ npm run preview
 
 `dist/` 可由任意静态 Web 服务托管，无需应用后端；Vite 使用相对资源路径，支持子路径部署。浏览器记录按站点来源（协议、域名、端口）隔离，更换访问地址前可用 JSON 备份迁移。
 
+## GitHub Pages
+
+线上地址：https://xr-su.github.io/idea-with-ai/
+
+`.github/workflows/deploy-pages.yml` 在推送到 `main` 后自动构建并部署，也可在 GitHub Actions 页面手动运行。仓库的 Settings → Pages → Build and deployment → Source 使用 GitHub Actions。
+
 ## 使用流程
 
 1. 在工作台写下一句话，选择“先记下来”，或直接“与 AI 一起梳理”。也可以创建空会话再输入。
