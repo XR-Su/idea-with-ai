@@ -126,3 +126,23 @@ it('普通 Markdown 对话经过真实解析后可展示，再按两字段回复
   fireEvent.click(screen.getByRole('button', { name: '生成归档草稿' })); await screen.findByRole('dialog');
   expect(stored()[0].archiveDraft?.title).toBe('最小功能方案'); expect(stored()[0].versions).toHaveLength(0); expect(fetcher).toHaveBeenCalledTimes(2);
 });
+it('会话顶部可收起并通过居中的标题展开，重新打开会话默认展开', () => {
+  const idea = newIdea('固定顶部的会话');
+  idea.messages = [userMessage('保留对话内容')];
+  localStorage.setItem(DATA_KEY, JSON.stringify([idea]));
+  render(<App />); openIdea(idea.title);
+  fireEvent.change(screen.getByRole('textbox', { name: '会话输入' }), { target: { value: '尚未发送的内容' } });
+  fireEvent.click(screen.getByRole('button', { name: '收起' }));
+  expect(screen.queryByRole('group', { name: '会话与方案' })).toBeNull();
+  expect(screen.getByText('灵感会话')).toBeTruthy();
+  const title = screen.getByRole('button', { name: idea.title });
+  expect(title.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getByText('保留对话内容')).toBeTruthy();
+  expect((screen.getByRole('textbox', { name: '会话输入' }) as HTMLTextAreaElement).value).toBe('尚未发送的内容');
+  fireEvent.click(title);
+  expect(screen.getByRole('group', { name: '会话与方案' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '收起' }));
+  openIdea(idea.title);
+  expect(screen.getByRole('group', { name: '会话与方案' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '收起' }).getAttribute('aria-expanded')).toBe('true');
+});
