@@ -10,3 +10,72 @@
 
 .mobile-nav-close{display:none}.hero p,.process-card p,.recent-card p,.list-empty,.local-label{color:#748367}.subtle-label{color:#849474}.idea-item small{color:#78886b}.idea-item strong{color:#506548}.home-footer{color:#81936c}.composer-note{color:#859674}.composer-footer>span{color:#879775}.capture-footer>span{color:#849974}.field-help{color:#758b63}
 @media(max-width:680px){.mobile-nav-close{display:inline-flex;position:absolute;top:22px;right:14px}.sidebar .brand{padding-right:20px}.sidebar .brand>span:last-child{font-size:22px}.capture-label .subtle-label{font-size:9px}}
+
+/* Give the capture field its own inset surface and a quiet, consistent focus state. */
+.capture-card {
+  padding: 24px;
+}
+.capture-label {
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.capture-label .subtle-label {
+  font-size: 11px;
+}
+.capture-card textarea {
+  display: block;
+  margin: 16px 0 20px;
+  padding: 16px 18px;
+  min-height: 148px;
+  border: 1px solid #e2e7dc;
+  border-radius: 8px;
+  background: #fafbf6;
+  font-size: 15px;
+  line-height: 1.8;
+  caret-color: #2f5143;
+}
+.capture-card textarea::placeholder {
+  font-size: 14px;
+  color: #8a957f;
+}
+.capture-card textarea:focus,
+.capture-card textarea:focus-visible {
+  outline: none;
+  border-color: #8ca57c;
+  box-shadow: 0 0 0 3px #78946114;
+}
+.capture-footer {
+  padding-top: 18px;
+  gap: 16px;
+}
+.capture-footer > div {
+  gap: 10px;
+}
+.composer:focus-within {
+  border-color: #8ca57c;
+  box-shadow: 0 0 0 3px #78946114;
+}
+.composer textarea {
+  display: block;
+  caret-color: #2f5143;
+}
+.composer textarea:focus-visible {
+  outline: none;
+}
+@media (max-width: 680px) {
+  .capture-card { padding: 20px 18px 18px; }
+  .capture-label { font-size: 12px; gap: 7px 12px; }
+  .capture-label .subtle-label { font-size: 10px; }
+  .capture-card textarea {
+    margin: 16px 0 18px;
+    padding: 14px 15px;
+    min-height: 140px;
+    font-size: 16px;
+    line-height: 1.8;
+  }
+  .capture-card textarea::placeholder { font-size: 14px; }
+  .capture-footer { padding-top: 16px; }
+  .capture-footer .button { min-height: 44px; }
+}

@@ -114,3 +114,15 @@ it('删除需要确认，取消保留全部版本，确认移除会话及版本'
   fireEvent.click(screen.getByRole('button', { name: '删除灵感' })); fireEvent.click(screen.getByRole('button', { name: '保留灵感' })); expect(stored()[0].versions).toHaveLength(2);
   fireEvent.click(screen.getByRole('button', { name: '删除灵感' })); fireEvent.click(screen.getByRole('button', { name: '确认删除' })); expect(stored()).toHaveLength(0);
 });
+
+it('普通 Markdown 对话经过真实解析后可展示，再按两字段回复生成方案草稿', async () => {
+  configure();
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '我们先确定最小功能。\n\n- 记录灵感\n- 导出方案' } }] })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ title: '最小功能方案', markdown: '## 目标\n验证捕获与导出。' }) } }] })));
+  vi.stubGlobal('fetch', fetcher); render(<App />); fireEvent.click(screen.getByRole('button', { name: /新建灵感/ })); send('做一个灵感工具');
+  await screen.findByText('我们先确定最小功能。');
+  expect(screen.queryByRole('alert')).toBeNull(); expect(stored()[0].messages.map(m => m.role)).toEqual(['user', 'assistant']);
+  fireEvent.click(screen.getByRole('button', { name: '生成归档草稿' })); await screen.findByRole('dialog');
+  expect(stored()[0].archiveDraft?.title).toBe('最小功能方案'); expect(stored()[0].versions).toHaveLength(0); expect(fetcher).toHaveBeenCalledTimes(2);
+});
