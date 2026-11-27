@@ -252,7 +252,38 @@ export default function App() {
           {((retry?.ideaId === active.id && retry.action === 'archive') || (active.mode !== 'silent' && (retry?.ideaId === active.id || lastMessage?.role === 'user'))) && !busy && <button className="button secondary retry-button" disabled={!!storageError} onClick={() => void runAI(active, retry?.ideaId === active.id ? retry.action : 'chat')}><ArrowRight size={15} />{retry?.ideaId === active.id && retry.action === 'archive' ? '重试生成方案' : lastMessage?.silent && retry?.ideaId !== active.id ? '让 AI 回应' : '继续 / 重试 AI 回复'}</button>}
           {!messageCount && <div className="chat-welcome"><p>你想创造什么，或者解决什么问题？</p><span>一个粗略的念头也足够开始。</span></div>}
           </div>
-          <div ref={bottom} className="composer"><div className="composer-modes"><fieldset className="conversation-modes thinking-modes" disabled={!!busy || !!storageError} aria-describedby="thinking-mode-hint"><legend>思维模式</legend>{thinkingModes.map(mode => <label key={mode.value} className={active.thinkingMode === mode.value ? 'selected' : ''}><input type="radio" name="thinking-mode" value={mode.value} checked={active.thinkingMode === mode.value} onChange={() => selectThinkingMode(mode.value)} /><span>{mode.label}</span></label>)}</fieldset><fieldset className="conversation-modes" disabled={!!busy || !!storageError} aria-describedby="conversation-mode-hint"><legend>回应模式</legend>{conversationModes.map(mode => <label key={mode.value} className={active.mode === mode.value ? 'selected' : ''}><input type="radio" name="conversation-mode" value={mode.value} checked={active.mode === mode.value} onChange={() => changeMode(mode.value)} /><span>{mode.label}</span></label>)}</fieldset></div><p id="thinking-mode-hint" className="thinking-mode-hint">{thinkingModes.find(mode => mode.value === active.thinkingMode)?.hint}</p><textarea aria-label="会话输入" placeholder={active.mode === 'silent' ? '尽管写下来，AI 暂不回应…' : '继续说说你的想法…'} value={active.input} disabled={!!busy || !!storageError} onChange={e => update(active.id, i => ({ ...i, input: e.target.value }))} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} /><div className="composer-footer"><span>{active.input.trim() ? '输入内容已在本地保存' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送消息" className="send-button" onClick={send} disabled={!active.input.trim() || !!busy || !!storageError}><ArrowUp size={20} /></button></div></div><p id="conversation-mode-hint" className="composer-note">{conversationModes.find(mode => mode.value === active.mode)?.hint}</p>
+          <div ref={bottom} className="composer-area">
+            <section className="mode-settings" aria-label="对话模式设置">
+              <div className="mode-controls">
+                <div className="mode-control">
+                  <label htmlFor="thinking-mode">思维模式</label>
+                  <div className="mode-select">
+                    <select id="thinking-mode" value={active.thinkingMode} disabled={!!busy || !!storageError} aria-describedby="thinking-mode-hint" onChange={e => selectThinkingMode(e.target.value as ThinkingMode)}>
+                      {thinkingModes.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+                    </select>
+                    <ChevronDown size={15} aria-hidden="true" />
+                  </div>
+                </div>
+                <div className="mode-control">
+                  <label htmlFor="conversation-mode">回应模式</label>
+                  <div className="mode-select">
+                    <select id="conversation-mode" value={active.mode} disabled={!!busy || !!storageError} aria-describedby="conversation-mode-hint" onChange={e => changeMode(e.target.value as ConversationMode)}>
+                      {conversationModes.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+                    </select>
+                    <ChevronDown size={15} aria-hidden="true" />
+                  </div>
+                </div>
+              </div>
+              <div className="mode-hints">
+                <p id="thinking-mode-hint"><strong>思维：</strong><span>{thinkingModes.find(mode => mode.value === active.thinkingMode)?.hint}</span></p>
+                <p id="conversation-mode-hint"><strong>回应：</strong><span>{conversationModes.find(mode => mode.value === active.mode)?.hint}</span></p>
+              </div>
+            </section>
+            <div className="composer">
+              <textarea aria-label="会话输入" placeholder={active.mode === 'silent' ? '尽管写下来，AI 暂不回应…' : '继续说说你的想法…'} value={active.input} disabled={!!busy || !!storageError} onChange={e => update(active.id, i => ({ ...i, input: e.target.value }))} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} />
+              <div className="composer-footer"><span>{active.input.trim() ? '输入内容已在本地保存' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送消息" className="send-button" onClick={send} disabled={!active.input.trim() || !!busy || !!storageError}><ArrowUp size={20} /></button></div>
+            </div>
+          </div>
         </section><aside className="context-panel"><div className="context-heading"><Leaf size={16} /><span>让想法向前一步</span></div><p>讨论会持续向前。归档保存阶段成果，不会结束会话。</p><div className="context-divider" /><h3>方案版本 <span>{active.versions.length}</span></h3>{active.versions.length ? [...active.versions].reverse().map(v => <button className="context-version" key={v.id} onClick={() => { setSelectedVersion(v.id); setTab('plans'); }}><span>V{v.number}</span><div><strong>{v.title}</strong><small>{timeLabel(v.createdAt)}</small></div><ArrowRight size={14} /></button>) : <div className="context-empty"><FileText size={27} strokeWidth={1.2} /><span>聊到一个阶段，<br />就留下一个方案版本。</span></div>}<div className="context-tip"><History size={15} /><p>旧版本可查看和编辑；所有新讨论都接在当前会话之后。</p></div></aside></div> : <section className="plans-page">{version ? <>
           <div className="version-bar"><label className="version-selector"><History size={17} /><select aria-label="选择方案版本" value={version.id} onChange={e => setSelectedVersion(e.target.value)}>{[...active.versions].reverse().map(v => <option value={v.id} key={v.id}>V{v.number} · {v.title}</option>)}</select></label><button className="text-button" onClick={() => setTab('chat')}><ArrowLeft size={14} />继续当前会话</button></div>
           <article className="plan-document"><div className="document-eyebrow"><span className="status-pill">V{version.number}</span><span>可执行方案</span><span>思维模式 · {thinkingModeLabel(version.thinkingMode ?? 'default')}</span></div><h2>{version.title}</h2><div className="document-meta"><span><Clock3 size={13} />归档于 {fullTime(version.createdAt)}</span>{version.updatedAt !== version.createdAt && <span>编辑于 {fullTime(version.updatedAt)}</span>}</div><div className="document-actions"><button className="button secondary" disabled={!!busy || !!storageError} onClick={() => { setEditing({ title: version.title, content: version.content }); setDialog('edit'); }}><PencilLine size={15} />编辑方案</button><button className="button secondary" onClick={() => setDialog('snapshot')}><History size={15} />讨论快照</button><button className="button secondary" onClick={() => exportVersion(version)}><ArrowDownToLine size={15} />导出 Markdown</button><label className="checkbox-row"><input type="checkbox" checked={includeChat} onChange={e => setIncludeChat(e.target.checked)} />附带讨论</label></div><div className="document-body"><Markdown text={version.content} /></div><div className="document-footnote"><ShieldCheck size={14} />编辑此版本不会改变归档时的讨论快照。新讨论始终沿当前会话继续。</div></article>
