@@ -105,6 +105,11 @@
 .conversation-modes input:focus-visible + span { outline: 2px solid #678557; outline-offset: 2px; }
 .conversation-modes:disabled { opacity: .5; }
 .conversation-modes:disabled label { cursor: not-allowed; }
+.composer-modes { display: flex; flex-wrap: wrap; gap: 0 24px; }
+.thinking-mode-hint { color: #75856a; font-size: 11px; line-height: 1.7; margin: 0 0 12px; }
+.mode-change { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 24px; color: #718467; font-size: 11px; }
+.mode-change::before, .mode-change::after { content: ''; height: 1px; background: #dfe6d5; flex: 1; min-width: 12px; }
+.mode-change time { color: #849478; font-size: 10px; }
 @media (max-width: 680px) {
   .conversation-modes span { min-height: 44px; }
   .conversation-modes legend { line-height: 44px; }

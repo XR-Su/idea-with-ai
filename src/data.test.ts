@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { archive, backup, DATA_KEY, defaultSettings, editVersion, exportMarkdown, loadIdeas, loadSettings, mergeBackup, newIdea, parseBackup, saveSettings, SETTINGS_KEY, userMessage } from './data';
+import { archive, archiveDraftIsStale, backup, changeThinkingMode, DATA_KEY, defaultSettings, editVersion, exportMarkdown, loadIdeas, loadSettings, mergeBackup, newIdea, parseBackup, saveSettings, SETTINGS_KEY, userMessage } from './data';
 import type { ArchiveDraft } from './types';
 beforeEach(() => localStorage.clear());
 function draftFor(text: string): ArchiveDraft { return { title: '行动方案', content: text, createdAt: new Date().toISOString(), snapshot: [userMessage('先做一个原型')] }; }
@@ -68,5 +68,54 @@ describe('密钥配置', () => {
     s.rememberKeys = true; saveSettings(s); expect(loadSettings().keys).toEqual(s.keys);
     s.rememberKeys = false; saveSettings(s); expect(loadSettings().keys.deepseek).toBe(''); expect(loadSettings().keys.minimax).toBe('');
     expect(JSON.stringify(backup([newIdea()]))).not.toContain('TEST_ONLY');
+  });
+});
+
+describe('思维模式与历史兼容', () => {
+  it('切换保留旧消息并记录位置，重复选择不产生记录', () => {
+    const i = newIdea('项目推进'); i.messages = [userMessage('原始情况')];
+    const selected = changeThinkingMode(i, 'mao-selected-works');
+    expect(i.thinkingMode).toBe('default'); expect(i.messages).toHaveLength(1);
+    expect(selected.messages[0]).toEqual(i.messages[0]);
+    expect(selected.messages[1]).toMatchObject({ role: 'mode-change', thinkingMode: 'mao-selected-works', content: '思维模式已切换为教员' });
+    expect(changeThinkingMode(selected, 'mao-selected-works')).toBe(selected);
+  });
+  it('旧备份恢复为默认模式，与迁移后的数据合并不产生副本', () => {
+    const i = newIdea('旧记录'); const legacy = { ...i } as Partial<typeof i>; delete legacy.thinkingMode;
+    const restored = parseBackup(JSON.stringify(backup([legacy as typeof i])));
+    expect(restored[0].thinkingMode).toBe('default');
+    expect(mergeBackup([legacy as typeof i], restored)).toHaveLength(1);
+  });
+  it('模式、切换记录、历史回答及归档模式随备份和 Markdown 保存', () => {
+    const selected = changeThinkingMode(newIdea('模式备份'), 'mao-selected-works');
+    selected.messages.push(userMessage('如何推进'), { id: 'reply-id', role: 'assistant', content: '先调查实际障碍。', createdAt: selected.createdAt, thinkingMode: 'mao-selected-works' });
+    const draft = { ...draftFor('阶段方案'), snapshot: selected.messages, thinkingMode: selected.thinkingMode };
+    const archived = archive(selected, draft); archived.archiveDraft = draft;
+    expect(parseBackup(JSON.stringify(backup([archived])))).toEqual([archived]);
+    const markdown = exportMarkdown(archived.versions[0], true);
+    expect(markdown).toContain('思维模式：教员'); expect(markdown).toContain('思维模式切换'); expect(markdown).toContain('AI · 教员');
+    const changed = changeThinkingMode(archived, 'default');
+    expect(changed.versions[0]).toEqual(archived.versions[0]);
+  });
+  it('切换或新增讨论使草稿过期，切回原模式也必须重新生成', () => {
+    const i = newIdea(); i.messages = [userMessage('情况')];
+    i.archiveDraft = { ...draftFor('原方案'), snapshot: i.messages };
+    expect(archiveDraftIsStale(i)).toBe(false);
+    expect(archiveDraftIsStale({ ...i, thinkingMode: 'mao-selected-works' })).toBe(true);
+    const switched = changeThinkingMode(i, 'mao-selected-works');
+    expect(archiveDraftIsStale(switched)).toBe(true);
+    expect(archiveDraftIsStale(changeThinkingMode(switched, 'default'))).toBe(true);
+    expect(archiveDraftIsStale({ ...i, messages: [userMessage('另一条讨论')] })).toBe(true);
+  });
+  it('拒绝未知模式和缺少模式的切换标记，防止导入后错误解释历史', () => {
+    const i = newIdea();
+    const invalid = [
+      { ...i, thinkingMode: 'unknown' },
+      { ...i, messages: [{ ...userMessage('切换'), role: 'mode-change' }] },
+      { ...i, messages: [{ ...userMessage('回答'), role: 'assistant', thinkingMode: 'unknown' }] },
+      { ...i, archiveDraft: { ...draftFor('正文'), thinkingMode: 'unknown' } },
+      { ...archive(i, draftFor('正文')), versions: [{ ...archive(i, draftFor('正文')).versions[0], thinkingMode: 'unknown' }] },
+    ];
+    for (const value of invalid) expect(() => parseBackup(JSON.stringify(backup([value as typeof i])))).toThrow('数据格式无效');
   });
 });

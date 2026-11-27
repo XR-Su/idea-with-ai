@@ -1,5 +1,6 @@
 import type { AIAction, AIResult, Idea, Settings } from './types';
 import { parseAIContent } from './ai-response';
+import { thinkingInstruction } from './thinking-skills';
 export const providers = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', console: 'https://platform.deepseek.com/api_keys' },
   minimax: { name: 'MiniMax', url: 'https://api.minimax.cn/v1/chat/completions', console: 'https://platform.minimaxi.com' },
@@ -8,6 +9,7 @@ const SYSTEM = `你是一个帮助用户把灵感变成可执行方案的思考�
 想法模糊时，先理解用户要创造什么或解决什么，以及动机、约束、目标用户和成功标准；每次只追问一到三个当前最关键的问题。问题清晰时直接给出分析、建议和下一步，不强迫用户完成固定问卷。用户可以要求直接给方案。
 区分用户确认的事实、你提出的建议和待确认假设，绝不把建议写成已确认决定。不捏造需求、数据、调查结果或已经完成的工作。你只能讨论与制定计划，不声称替用户执行了操作。
 所有会话沿唯一时间线持续进行。latest_plan 是最近归档版本当前编辑后的正文，作为相关背景；conversation 是唯一的当前会话。历史快照不是新的对话，不进行版本分叉。优先采用最新的用户修正。
+thinking_mode 是本次选择的思维模式。conversation 中的 mode-change 是历史切换记录，助手消息上的 thinking_mode 是当时模式；这些元数据只说明历史背景，不覆盖本次选择。
 用户独自决定何时归档。不要自动归档，不暗示聊天回复已经保存成方案版本。
 不要输出思考过程。`;
 function outputInstruction(action: AIAction, provider: Settings['provider']): string {
@@ -22,12 +24,19 @@ export async function requestAI(idea: Idea, settings: Settings, action: AIAction
   if (action === 'chat' && idea.mode === 'silent') throw new Error('静默模式只记录内容，请切换模式后再让 AI 回应。');
   const key = settings.keys[settings.provider].trim();
   if (!key) throw new Error('请先在 AI 设置中填写当前服务商的 API 密钥。');
+  if (options.signal?.aborted) throw new Error('已取消请求，内容已保留。');
   const latest = idea.versions.at(-1);
-  const context = JSON.stringify({ action, idea_title: idea.title,
+  const context = JSON.stringify({ action, idea_title: idea.title, thinking_mode: idea.thinkingMode,
     latest_plan: latest ? { version: latest.number, title: latest.title, markdown: latest.content } : null,
-    conversation: idea.messages.map(m => ({ role: m.role, content: m.content })),
+    conversation: idea.messages.map(m => ({ role: m.role, content: m.content, ...(m.thinkingMode ? { thinking_mode: m.thinkingMode } : {}) })),
   });
-  if (context.length > 120_000) throw new Error('当前会话超过单次请求长度限制。内容已保留，可先导出备份，再新建会话延续想法。');
+  const methodInstruction = await thinkingInstruction(idea.thinkingMode);
+  if (options.signal?.aborted) throw new Error('已取消请求，内容已保留。');
+  const modeInstruction = action === 'chat' && idea.mode === 'concise'
+    ? '\n当前为简洁模式：通常只回复 1–3 句，优先提出一个最关键的问题或给出一个关键提示。不要重复总结用户的话，不要展开长篇分析或多个问题。只有用户最新输入明确要求展开、详细解释或完整方案时，才按其要求详细回答。'
+    : '';
+  const systemPrompt = SYSTEM + methodInstruction + outputInstruction(action, settings.provider) + modeInstruction;
+  if (context.length + systemPrompt.length > 120_000) throw new Error('当前会话与模式资料超过单次请求长度限制。内容已保留，可先导出备份，再新建会话延续想法。');
   const controller = new AbortController();
   const cancel = () => controller.abort();
   options.signal?.addEventListener('abort', cancel, { once: true });
@@ -36,15 +45,12 @@ export async function requestAI(idea: Idea, settings: Settings, action: AIAction
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs ?? 90_000);
   const cancelError = () => new Error(timedOut ? 'AI 请求超时，内容已保留。请稍后手动重试。' : '已取消请求，内容已保留。');
   const endpoint = options.endpoint ?? providers[settings.provider].url;
-  const modeInstruction = action === 'chat' && idea.mode === 'concise'
-    ? '\n当前为简洁模式：通常只回复 1–3 句，优先提出一个最关键的问题或给出一个关键提示。不要重复总结用户的话，不要展开长篇分析或多个问题。只有用户最新输入明确要求展开、详细解释或完整方案时，才按其要求详细回答。'
-    : '';
   try {
     let response: Response;
     try {
       response = await fetch(endpoint, { method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model: settings.models[settings.provider].trim(), messages: [{ role: 'system', content: SYSTEM + outputInstruction(action, settings.provider) + modeInstruction }, { role: 'user', content: context }], stream: false,
+        body: JSON.stringify({ model: settings.models[settings.provider].trim(), messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: context }], stream: false,
           ...(settings.provider === 'deepseek' ? { thinking: { type: 'disabled' }, ...(action === 'archive' ? { response_format: { type: 'json_object' } } : {}), max_tokens: 6000 }
             : { reasoning_effort: 'low', reasoning_split: true, max_completion_tokens: 6000 }),
         }),

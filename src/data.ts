@@ -1,4 +1,5 @@
-import type { ArchiveDraft, Backup, Idea, Message, PlanVersion, Settings } from './types';
+import type { ArchiveDraft, Backup, Idea, Message, PlanVersion, Settings, ThinkingMode } from './types';
+import { isThinkingMode, thinkingModeLabel } from './thinking-modes';
 export const DATA_KEY = 'idea-with-ai.ideas.v1';
 export const SETTINGS_KEY = 'idea-with-ai.settings.v1';
 export const defaultSettings: Settings = {
@@ -8,9 +9,19 @@ export const defaultSettings: Settings = {
 export function uid() { return crypto.randomUUID(); }
 export function newIdea(text = ''): Idea {
   const now = new Date().toISOString();
-  return { id: uid(), title: text.trim().slice(0, 32) || '未命名灵感', createdAt: now, updatedAt: now, messages: [], input: text, mode: 'detailed', versions: [] };
+  return { id: uid(), title: text.trim().slice(0, 32) || '未命名灵感', createdAt: now, updatedAt: now, messages: [], input: text, mode: 'detailed', thinkingMode: 'default', versions: [] };
 }
 export function userMessage(content: string, silent = false): Message { return { id: uid(), role: 'user', content: content.trim(), createdAt: new Date().toISOString(), ...(silent ? { silent: true } : {}) }; }
+export function changeThinkingMode(idea: Idea, thinkingMode: ThinkingMode): Idea {
+  if (thinkingMode === idea.thinkingMode) return idea;
+  const now = new Date().toISOString();
+  const marker: Message = { id: uid(), role: 'mode-change', content: `思维模式已切换为${thinkingModeLabel(thinkingMode)}`, createdAt: now, thinkingMode };
+  return { ...idea, thinkingMode, updatedAt: now, messages: [...idea.messages, marker] };
+}
+export function archiveDraftIsStale(idea: Idea): boolean {
+  const draft = idea.archiveDraft;
+  return !!draft && ((draft.thinkingMode ?? 'default') !== idea.thinkingMode || draft.snapshot.length !== idea.messages.length || draft.snapshot.some((m, index) => m.id !== idea.messages[index]?.id));
+}
 export function archive(idea: Idea, draft: ArchiveDraft): Idea {
   if (!draft.title.trim() || !draft.content.trim()) throw new Error('请填写方案标题和正文。');
   const now = new Date().toISOString();
@@ -18,6 +29,7 @@ export function archive(idea: Idea, draft: ArchiveDraft): Idea {
     id: uid(), number: Math.max(0, ...idea.versions.map(v => v.number)) + 1,
     title: draft.title.trim(), content: draft.content.trim(), createdAt: now, updatedAt: now,
     snapshot: draft.snapshot.map(m => ({ ...m })),
+    ...(draft.thinkingMode ? { thinkingMode: draft.thinkingMode } : {}),
   };
   return { ...idea, versions: [...idea.versions, version], archiveDraft: undefined, updatedAt: now };
 }
@@ -31,10 +43,13 @@ const str = (v: unknown): v is string => typeof v === 'string';
 const date = (v: unknown) => str(v) && Number.isFinite(Date.parse(v));
 const unique = (items: { id: string }[]) => new Set(items.map(v => v.id)).size === items.length;
 function validMessages(v: unknown): v is Message[] {
-  return Array.isArray(v) && v.every(m => obj(m) && str(m.id) && !!m.id && ['user', 'assistant'].includes(String(m.role)) && str(m.content) && date(m.createdAt) && (m.silent === undefined || (m.silent === true && m.role === 'user'))) && unique(v);
+  return Array.isArray(v) && v.every(m => obj(m) && str(m.id) && !!m.id && ['user', 'assistant', 'mode-change'].includes(String(m.role)) && str(m.content) && date(m.createdAt)
+    && (m.silent === undefined || (m.silent === true && m.role === 'user'))
+    && (m.thinkingMode === undefined || (m.role !== 'user' && isThinkingMode(m.thinkingMode)))
+    && (m.role !== 'mode-change' || isThinkingMode(m.thinkingMode))) && unique(v);
 }
 function validDraft(v: unknown): v is ArchiveDraft {
-  return obj(v) && str(v.title) && str(v.content) && date(v.createdAt) && validMessages(v.snapshot);
+  return obj(v) && str(v.title) && str(v.content) && date(v.createdAt) && validMessages(v.snapshot) && (v.thinkingMode === undefined || isThinkingMode(v.thinkingMode));
 }
 function validVersion(v: unknown): v is PlanVersion {
   return obj(v) && str(v.id) && !!v.id && typeof v.number === 'number' && Number.isSafeInteger(v.number) && v.number > 0 && date(v.updatedAt) && validDraft(v);
@@ -43,17 +58,25 @@ function validVersions(v: unknown): v is PlanVersion[] {
   return Array.isArray(v) && v.every(validVersion) && unique(v) && v.every((version, n) => n === 0 || version.number > v[n - 1].number);
 }
 export function validateIdeas(value: unknown): Idea[] {
-  if (!Array.isArray(value) || !value.every(i => obj(i) && str(i.id) && !!i.id && str(i.title) && date(i.createdAt) && date(i.updatedAt) && str(i.input) && (i.mode === undefined || (str(i.mode) && ['silent', 'concise', 'detailed'].includes(i.mode))) && validMessages(i.messages) && validVersions(i.versions) && (i.archiveDraft === undefined || validDraft(i.archiveDraft))) || !unique(value)) {
+  if (!Array.isArray(value) || !value.every(i => obj(i) && str(i.id) && !!i.id && str(i.title) && date(i.createdAt) && date(i.updatedAt) && str(i.input) && (i.mode === undefined || (str(i.mode) && ['silent', 'concise', 'detailed'].includes(i.mode))) && (i.thinkingMode === undefined || isThinkingMode(i.thinkingMode)) && validMessages(i.messages) && validVersions(i.versions) && (i.archiveDraft === undefined || validDraft(i.archiveDraft))) || !unique(value)) {
     throw new Error('数据格式无效。原有数据未被覆盖，请使用有效的拾念备份。');
   }
   // Rebuild validated objects so imported extra fields never enter application state.
   return value.map(i => ({ id: i.id, title: i.title, createdAt: i.createdAt, updatedAt: i.updatedAt,
-    input: i.input, mode: i.mode ?? 'detailed', messages: i.messages.map(cleanMessage), versions: i.versions.map((v: PlanVersion) => ({
-      id: v.id, number: v.number, title: v.title, content: v.content, createdAt: v.createdAt, updatedAt: v.updatedAt, snapshot: v.snapshot.map(cleanMessage),
-    })), ...(i.archiveDraft ? { archiveDraft: { title: i.archiveDraft.title, content: i.archiveDraft.content, createdAt: i.archiveDraft.createdAt, snapshot: i.archiveDraft.snapshot.map(cleanMessage) } } : {}),
+    input: i.input, mode: i.mode ?? 'detailed', thinkingMode: i.thinkingMode ?? 'default', messages: i.messages.map(cleanMessage), versions: i.versions.map((v: PlanVersion) => ({
+      id: v.id, number: v.number, updatedAt: v.updatedAt, ...cleanDraft(v),
+    })), ...(i.archiveDraft ? { archiveDraft: cleanDraft(i.archiveDraft) } : {}),
   }));
 }
-function cleanMessage(m: Message): Message { return { id: m.id, role: m.role, content: m.content, createdAt: m.createdAt, ...(m.silent ? { silent: true } : {}) }; }
+function cleanMessage(m: Message): Message {
+  const base = { id: m.id, content: m.content, createdAt: m.createdAt };
+  if (m.role === 'mode-change') return { ...base, role: m.role, thinkingMode: m.thinkingMode };
+  if (m.role === 'assistant') return { ...base, role: m.role, ...(m.thinkingMode ? { thinkingMode: m.thinkingMode } : {}) };
+  return { ...base, role: m.role, ...(m.silent ? { silent: true } : {}) };
+}
+function cleanDraft(draft: ArchiveDraft): ArchiveDraft {
+  return { title: draft.title, content: draft.content, createdAt: draft.createdAt, snapshot: draft.snapshot.map(cleanMessage), ...(draft.thinkingMode ? { thinkingMode: draft.thinkingMode } : {}) };
+}
 export function loadIdeas(): { ideas: Idea[]; raw: string | null; error: string } {
   let raw: string | null = null;
   try { raw = localStorage.getItem(DATA_KEY); return { ideas: raw ? validateIdeas(JSON.parse(raw)) : [], raw, error: '' }; }
@@ -95,9 +118,9 @@ export function mergeBackup(existing: Idea[], imported: Idea[]): Idea[] {
 export function safeFilename(title: string) { return title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim().slice(0, 80) || '灵感方案'; }
 export function exportMarkdown(version: PlanVersion, includeChat: boolean): string {
   const title = version.title.replace(/[\r\n]+/g, ' ');
-  const header = `# ${title}\n\n- 版本：V${version.number}\n- 归档时间：${version.createdAt}\n- 最后编辑：${version.updatedAt}\n\n---\n\n${version.content}\n`;
+  const header = `# ${title}\n\n- 版本：V${version.number}\n- 归档时间：${version.createdAt}\n- 最后编辑：${version.updatedAt}\n- 思维模式：${thinkingModeLabel(version.thinkingMode ?? 'default')}\n\n---\n\n${version.content}\n`;
   if (!includeChat) return header;
-  return header + '\n---\n\n## 归档时的会话快照\n\n' + version.snapshot.map(m => `### ${m.role === 'user' ? '我' : 'AI'} · ${m.createdAt}\n\n${m.content}\n`).join('\n');
+  return header + '\n---\n\n## 归档时的会话快照\n\n' + version.snapshot.map(m => `### ${m.role === 'mode-change' ? '思维模式切换' : m.role === 'user' ? '我' : `AI · ${thinkingModeLabel(m.thinkingMode ?? 'default')}`} · ${m.createdAt}\n\n${m.content}\n`).join('\n');
 }
 export function download(text: string, filename: string, type = 'application/json') {
   const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
