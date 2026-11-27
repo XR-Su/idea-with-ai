@@ -19,6 +19,7 @@ function outputInstruction(action: AIAction, provider: Settings['provider']): st
 }
 export type RequestOptions = { signal?: AbortSignal; endpoint?: string; timeoutMs?: number };
 export async function requestAI(idea: Idea, settings: Settings, action: AIAction, options: RequestOptions = {}): Promise<AIResult> {
+  if (action === 'chat' && idea.mode === 'silent') throw new Error('静默模式只记录内容，请切换模式后再让 AI 回应。');
   const key = settings.keys[settings.provider].trim();
   if (!key) throw new Error('请先在 AI 设置中填写当前服务商的 API 密钥。');
   const latest = idea.versions.at(-1);
@@ -35,12 +36,15 @@ export async function requestAI(idea: Idea, settings: Settings, action: AIAction
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs ?? 90_000);
   const cancelError = () => new Error(timedOut ? 'AI 请求超时，内容已保留。请稍后手动重试。' : '已取消请求，内容已保留。');
   const endpoint = options.endpoint ?? providers[settings.provider].url;
+  const modeInstruction = action === 'chat' && idea.mode === 'concise'
+    ? '\n当前为简洁模式：通常只回复 1–3 句，优先提出一个最关键的问题或给出一个关键提示。不要重复总结用户的话，不要展开长篇分析或多个问题。只有用户最新输入明确要求展开、详细解释或完整方案时，才按其要求详细回答。'
+    : '';
   try {
     let response: Response;
     try {
       response = await fetch(endpoint, { method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model: settings.models[settings.provider].trim(), messages: [{ role: 'system', content: SYSTEM + outputInstruction(action, settings.provider) }, { role: 'user', content: context }], stream: false,
+        body: JSON.stringify({ model: settings.models[settings.provider].trim(), messages: [{ role: 'system', content: SYSTEM + outputInstruction(action, settings.provider) + modeInstruction }, { role: 'user', content: context }], stream: false,
           ...(settings.provider === 'deepseek' ? { thinking: { type: 'disabled' }, ...(action === 'archive' ? { response_format: { type: 'json_object' } } : {}), max_tokens: 6000 }
             : { reasoning_effort: 'low', reasoning_split: true, max_completion_tokens: 6000 }),
         }),

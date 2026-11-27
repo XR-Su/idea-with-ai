@@ -6,9 +6,14 @@ import { Markdown } from './components/Markdown';
 import { Modal } from './components/Modal';
 import { SettingsDialog } from './components/SettingsDialog';
 import { PlanEditor } from './components/PlanEditor';
-import type { AIAction, Idea, PlanVersion, Settings } from './types';
+import type { AIAction, ConversationMode, Idea, PlanVersion, Settings } from './types';
 
 type Dialog = 'settings' | 'backup' | 'rename' | 'delete' | 'archive' | 'edit' | 'snapshot' | null;
+const conversationModes: { value: ConversationMode; label: string; hint: string }[] = [
+  { value: 'silent', label: '静默', hint: '只记录你的想法，AI 暂不回应。' },
+  { value: 'concise', label: '简洁', hint: 'AI 通常用 1–3 句给出关键引导，需要时可要求展开。' },
+  { value: 'detailed', label: '详细', hint: 'AI 帮你展开想法，由你决定方向和归档时机。' },
+];
 const starters = [
   { icon: Lightbulb, label: '我想创造一个东西', text: '我想做一个 ' },
   { icon: Circle, label: '有个问题想解决', text: '我遇到了一个问题：' },
@@ -88,7 +93,7 @@ export default function App() {
     else flash(text.trim() ? '灵感已记下，随时可以继续讨论' : '新会话已创建');
   }
   async function runAI(idea: Idea, action: AIAction) {
-    if (blockedRef.current) return;
+    if (blockedRef.current || (action === 'chat' && idea.mode === 'silent')) return;
     if (!settings.keys[settings.provider].trim()) { setRetry({ action, ideaId: idea.id }); setDialog('settings'); setError('内容已保存，配置 AI 后可继续。'); return; }
     cancelRequest(false); const controller = new AbortController(); requestRef.current = controller;
     setBusy({ action, ideaId: idea.id }); setError(''); setRetry(null);
@@ -111,9 +116,14 @@ export default function App() {
   }
   function send() {
     if (!active || busy || blockedRef.current || !active.input.trim()) return;
-    const next = { ...active, title: active.title === '未命名灵感' && !active.messages.length ? active.input.trim().slice(0, 32) : active.title, messages: [...active.messages, userMessage(active.input)], input: '', updatedAt: new Date().toISOString() };
+    const next = { ...active, title: active.title === '未命名灵感' && !active.messages.length ? active.input.trim().slice(0, 32) : active.title, messages: [...active.messages, userMessage(active.input, active.mode === 'silent')], input: '', updatedAt: new Date().toISOString() };
     if (!update(active.id, () => next)) return;
-    void runAI(next, 'chat');
+    if (next.mode !== 'silent') void runAI(next, 'chat');
+  }
+  function changeMode(mode: ConversationMode) {
+    if (!active || busy || blockedRef.current || mode === active.mode) return;
+    if (!update(active.id, i => ({ ...i, mode }))) return;
+    if (retry?.ideaId === active.id && retry.action === 'chat') { setRetry(null); setError(''); }
   }
   function requestArchive() {
     if (!active || busy || blockedRef.current) return;
@@ -230,10 +240,10 @@ export default function App() {
           <div className="conversation-start"><span><Sparkles size={16} /></span><p>这里是你的思考空间</p><small>不着急得到答案，先从你的想法开始。</small></div>
           {active.messages.map(m => <article key={m.id} className={`message ${m.role}`}><div className={`avatar ${m.role}`}>{m.role === 'user' ? '我' : <Sparkles size={17} />}</div><div className="message-main"><div className="message-label">{m.role === 'user' ? '我' : '思考伙伴'}<time>{new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(m.createdAt))}</time></div>{m.role === 'user' ? <div className="user-text">{m.content}</div> : <Markdown text={m.content} />}</div></article>)}
           {busy?.ideaId === active.id && <div className="thinking"><LoaderCircle size={17} className="spin" /><span>{busy.action === 'archive' ? '正在整理你的可执行方案…' : '正在认真想一想…'}</span><button className="text-button" onClick={() => cancelRequest()}>取消</button></div>}
-          {(retry?.ideaId === active.id || active.messages.at(-1)?.role === 'user') && !busy && <button className="button secondary retry-button" disabled={!!storageError} onClick={() => void runAI(active, retry?.ideaId === active.id ? retry.action : 'chat')}><ArrowRight size={15} />{retry?.ideaId === active.id && retry.action === 'archive' ? '重试生成方案' : '继续 / 重试 AI 回复'}</button>}
+          {((retry?.ideaId === active.id && retry.action === 'archive') || (active.mode !== 'silent' && (retry?.ideaId === active.id || active.messages.at(-1)?.role === 'user'))) && !busy && <button className="button secondary retry-button" disabled={!!storageError} onClick={() => void runAI(active, retry?.ideaId === active.id ? retry.action : 'chat')}><ArrowRight size={15} />{retry?.ideaId === active.id && retry.action === 'archive' ? '重试生成方案' : active.messages.at(-1)?.silent && retry?.ideaId !== active.id ? '让 AI 回应' : '继续 / 重试 AI 回复'}</button>}
           {!active.messages.length && <div className="chat-welcome"><p>你想创造什么，或者解决什么问题？</p><span>一个粗略的念头也足够开始。</span></div>}
           </div>
-          <div ref={bottom} className="composer"><textarea aria-label="会话输入" placeholder="继续说说你的想法…" value={active.input} disabled={!!busy || !!storageError} onChange={e => update(active.id, i => ({ ...i, input: e.target.value }))} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} /><div className="composer-footer"><span>{active.input.trim() ? '输入内容已在本地保存' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送消息" className="send-button" onClick={send} disabled={!active.input.trim() || !!busy || !!storageError}><ArrowUp size={20} /></button></div></div><p className="composer-note">AI 帮你展开想法，由你决定方向和归档时机。</p>
+          <div ref={bottom} className="composer"><fieldset className="conversation-modes" disabled={!!busy || !!storageError} aria-describedby="conversation-mode-hint"><legend>回应模式</legend>{conversationModes.map(mode => <label key={mode.value} className={active.mode === mode.value ? 'selected' : ''}><input type="radio" name="conversation-mode" value={mode.value} checked={active.mode === mode.value} onChange={() => changeMode(mode.value)} /><span>{mode.label}</span></label>)}</fieldset><textarea aria-label="会话输入" placeholder={active.mode === 'silent' ? '尽管写下来，AI 暂不回应…' : '继续说说你的想法…'} value={active.input} disabled={!!busy || !!storageError} onChange={e => update(active.id, i => ({ ...i, input: e.target.value }))} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} /><div className="composer-footer"><span>{active.input.trim() ? '输入内容已在本地保存' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送消息" className="send-button" onClick={send} disabled={!active.input.trim() || !!busy || !!storageError}><ArrowUp size={20} /></button></div></div><p id="conversation-mode-hint" className="composer-note">{conversationModes.find(mode => mode.value === active.mode)?.hint}</p>
         </section><aside className="context-panel"><div className="context-heading"><Leaf size={16} /><span>让想法向前一步</span></div><p>讨论会持续向前。归档保存阶段成果，不会结束会话。</p><div className="context-divider" /><h3>方案版本 <span>{active.versions.length}</span></h3>{active.versions.length ? [...active.versions].reverse().map(v => <button className="context-version" key={v.id} onClick={() => { setSelectedVersion(v.id); setTab('plans'); }}><span>V{v.number}</span><div><strong>{v.title}</strong><small>{timeLabel(v.createdAt)}</small></div><ArrowRight size={14} /></button>) : <div className="context-empty"><FileText size={27} strokeWidth={1.2} /><span>聊到一个阶段，<br />就留下一个方案版本。</span></div>}<div className="context-tip"><History size={15} /><p>旧版本可查看和编辑；所有新讨论都接在当前会话之后。</p></div></aside></div> : <section className="plans-page">{version ? <>
           <div className="version-bar"><label className="version-selector"><History size={17} /><select aria-label="选择方案版本" value={version.id} onChange={e => setSelectedVersion(e.target.value)}>{[...active.versions].reverse().map(v => <option value={v.id} key={v.id}>V{v.number} · {v.title}</option>)}</select></label><button className="text-button" onClick={() => setTab('chat')}><ArrowLeft size={14} />继续当前会话</button></div>
           <article className="plan-document"><div className="document-eyebrow"><span className="status-pill">V{version.number}</span><span>可执行方案</span></div><h2>{version.title}</h2><div className="document-meta"><span><Clock3 size={13} />归档于 {fullTime(version.createdAt)}</span>{version.updatedAt !== version.createdAt && <span>编辑于 {fullTime(version.updatedAt)}</span>}</div><div className="document-actions"><button className="button secondary" disabled={!!busy || !!storageError} onClick={() => { setEditing({ title: version.title, content: version.content }); setDialog('edit'); }}><PencilLine size={15} />编辑方案</button><button className="button secondary" onClick={() => setDialog('snapshot')}><History size={15} />讨论快照</button><button className="button secondary" onClick={() => exportVersion(version)}><ArrowDownToLine size={15} />导出 Markdown</button><label className="checkbox-row"><input type="checkbox" checked={includeChat} onChange={e => setIncludeChat(e.target.checked)} />附带讨论</label></div><div className="document-body"><Markdown text={version.content} /></div><div className="document-footnote"><ShieldCheck size={14} />编辑此版本不会改变归档时的讨论快照。新讨论始终沿当前会话继续。</div></article>

@@ -28,6 +28,53 @@ function withVersions(): Idea {
   v1.messages.push(userMessage('第二阶段讨论'));
   return archive(v1, { title: '方案二', content: 'V2 方案正文', createdAt: idea.createdAt, snapshot: v1.messages });
 }
+it('静默输入无需配置 AI，可连续保存；切回后主动回应包含全部内容', async () => {
+  const request = vi.spyOn(ai, 'requestAI').mockResolvedValue(reply);
+  render(<App />); fireEvent.click(screen.getByRole('button', { name: /新建灵感/ }));
+  expect((screen.getByRole('radio', { name: '详细' }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('radio', { name: '静默' })); send('先记录目标');
+  fireEvent.change(screen.getByRole('textbox', { name: '会话输入' }), { target: { value: '再记录约束' } });
+  fireEvent.keyDown(screen.getByRole('textbox', { name: '会话输入' }), { key: 'Enter', ctrlKey: true });
+  expect(stored()[0].messages.map(m => m.content)).toEqual(['先记录目标', '再记录约束']);
+  expect(stored()[0].input).toBe(''); expect(request).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).toBeNull(); expect(screen.queryByRole('button', { name: /AI 回应|AI 回复/ })).toBeNull();
+  cleanup(); configure(); render(<App />); openIdea(stored()[0].title);
+  expect((screen.getByRole('radio', { name: '静默' }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('radio', { name: '简洁' })); expect(request).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '让 AI 回应' })); await screen.findByText(reply.reply);
+  expect(request.mock.calls[0][0].mode).toBe('concise');
+  expect(request.mock.calls[0][0].messages.map(m => m.content)).toEqual(['先记录目标', '再记录约束']);
+  expect(stored()[0].messages).toHaveLength(3);
+});
+it('每个会话独立记住模式，切回详细后发送新消息包含静默内容', async () => {
+  configure(); const one = newIdea('静默会话'); const two = newIdea('详细会话');
+  localStorage.setItem(DATA_KEY, JSON.stringify([one, two]));
+  const request = vi.spyOn(ai, 'requestAI').mockResolvedValue(reply);
+  render(<App />); openIdea(one.title); fireEvent.click(screen.getByRole('radio', { name: '静默' })); send('积累的想法');
+  openIdea(two.title); expect((screen.getByRole('radio', { name: '详细' }) as HTMLInputElement).checked).toBe(true);
+  openIdea(one.title); expect((screen.getByRole('radio', { name: '静默' }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('radio', { name: '详细' })); expect(request).not.toHaveBeenCalled(); send('现在请帮我分析');
+  await screen.findByText(reply.reply);
+  expect(request.mock.calls[0][0].messages.map(m => m.content)).toEqual(['积累的想法', '现在请帮我分析']);
+});
+it('AI 请求期间禁用模式切换，取消后可以进入静默并隐藏聊天重试', () => {
+  configure(); vi.spyOn(ai, 'requestAI').mockImplementation(() => new Promise(() => {}));
+  render(<App />); fireEvent.click(screen.getByRole('button', { name: /新建灵感/ })); send('请帮我分析');
+  expect(screen.getByRole('radio', { name: '静默' }).closest('fieldset')?.disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  expect(screen.getByRole('radio', { name: '静默' }).closest('fieldset')?.disabled).toBe(false);
+  fireEvent.click(screen.getByRole('radio', { name: '静默' }));
+  expect(screen.queryByRole('button', { name: '继续 / 重试 AI 回复' })).toBeNull(); expect(stored()[0].mode).toBe('silent');
+});
+it('静默期间主动生成方案仍可调用 AI，失败后保留方案重试入口', async () => {
+  configure(); const i = newIdea('静默方案'); i.mode = 'silent'; i.messages = [userMessage('只记录想法', true)];
+  localStorage.setItem(DATA_KEY, JSON.stringify([i]));
+  const request = vi.spyOn(ai, 'requestAI').mockRejectedValueOnce(new Error('方案生成失败')).mockResolvedValue(plan);
+  render(<App />); openIdea(i.title); fireEvent.click(screen.getByRole('button', { name: '生成归档草稿' }));
+  await screen.findByText('方案生成失败'); fireEvent.click(screen.getByRole('button', { name: '重试生成方案' }));
+  await screen.findByRole('dialog'); expect(request.mock.calls.map(call => call[2])).toEqual(['archive', 'archive']);
+  expect(stored()[0].archiveDraft?.content).toBe(plan.markdown); expect(stored()[0].mode).toBe('silent');
+});
 it('无需配置 AI 即可捕获灵感并自动保存未发送输入', () => {
   const request = vi.spyOn(ai, 'requestAI'); render(<StrictMode><App /></StrictMode>);
   fireEvent.change(screen.getByRole('textbox', { name: '新灵感内容' }), { target: { value: '做一个种花提醒工具' } });
