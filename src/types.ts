@@ -1,6 +1,6 @@
 export type Provider = 'deepseek' | 'minimax';
 export type ConversationMode = 'silent' | 'concise' | 'detailed';
-export type Message = { id: string; role: 'user' | 'assistant'; content: string; createdAt: string; silent?: true };
+export type Message = { id: string; role: 'user' | 'assistant'; content: string; createdAt: string; silent?: true; collapsed?: true };
 export type PlanVersion = {
   id: string; number: number; title: string; content: string;
   createdAt: string; updatedAt: string; snapshot: Message[];

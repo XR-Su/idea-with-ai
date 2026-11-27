@@ -70,3 +70,11 @@ describe('密钥配置', () => {
     expect(JSON.stringify(backup([newIdea()]))).not.toContain('TEST_ONLY');
   });
 });
+
+it('折叠状态随备份和旧数据恢复，拒绝用户消息和非法折叠字段', () => {
+  const i = newIdea('折叠备份'); i.messages = [{ id: 'ai', role: 'assistant', content: '完整回复', createdAt: i.createdAt, collapsed: true }];
+  const saved = archive(i, { title: '方案', content: '正文', createdAt: i.createdAt, snapshot: i.messages });
+  expect(parseBackup(JSON.stringify(backup([saved])))).toEqual([saved]);
+  expect(() => parseBackup(JSON.stringify(backup([{ ...i, messages: [{ ...i.messages[0], collapsed: false }] } as unknown as typeof i])))).toThrow();
+  expect(() => parseBackup(JSON.stringify(backup([{ ...i, messages: [{ ...i.messages[0], role: 'user' }] } as typeof i])))).toThrow();
+});
