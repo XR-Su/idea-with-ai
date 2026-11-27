@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { providers, requestAI } from './ai';
-import { archive, defaultSettings, editVersion, newIdea, userMessage } from './data';
+import { archive, changeThinkingMode, defaultSettings, editVersion, newIdea, userMessage } from './data';
 import type { AIAction, Provider } from './types';
 const result = { reply: '最希望解决哪个问题？', title: '行动方案', markdown: '## 目标\n完成一个原型。' };
 const settings = (provider: Provider = 'deepseek') => ({ ...structuredClone(defaultSettings), provider, keys: { deepseek: 'test-key', minimax: 'test-key' } });
@@ -129,4 +129,48 @@ it('兼容只包含标题与正文的归档回复，即使无关字段类型不�
 });
 it('Markdown 空标题后没有正文时不能归档', async () => {
   respond('# 一个方案标题'); await expect(requestAI(idea(), settings('minimax'), 'archive')).rejects.toThrow('方案正文');
+});
+
+describe('所选 skill 实际进入请求', () => {
+  it.each(['deepseek', 'minimax'] as const)('%s 的教员对话与归档都包含 skill、所有参考资料和应用边界', async provider => {
+    const i = changeThinkingMode(idea(), 'mao-selected-works'); i.mode = 'concise';
+    const fetcher = respond();
+    for (const action of ['chat', 'archive'] as const) await requestAI(i, settings(provider), action);
+    for (const [index, call] of fetcher.mock.calls.entries()) {
+      const body = JSON.parse(call[1].body); const system = body.messages[0].content;
+      expect(system).toContain('当前思维模式：教员');
+      for (const file of ['SKILL.md', 'patterns.md', 'cheatsheet.md', 'glossary.md', 'chapters/ch01-volume-one.md', 'chapters/ch02-volume-two.md', 'chapters/ch03-volume-three.md', 'chapters/ch04-volume-four.md']) expect(system).toContain(`资料：${file}`);
+      expect(system).toContain('矛盾的主要方面'); expect(system).toContain('框架不适用时明确指出'); expect(system).toContain('未提供 EPUB 原著');
+      const context = JSON.parse(body.messages[1].content);
+      expect(context.thinking_mode).toBe('mao-selected-works');
+      expect(context.conversation.at(-1)).toMatchObject({ role: 'mode-change', thinking_mode: 'mao-selected-works' });
+      if (index === 0) expect(system).toContain('通常只回复 1–3 句');
+      else { expect(system).toContain('验收标准'); expect(system).not.toContain('当前为简洁模式'); }
+    }
+  });
+  it('切回默认不再发送教员资料，历史记录与当时模式仍保留', async () => {
+    const teacher = changeThinkingMode(idea(), 'mao-selected-works');
+    teacher.messages.push({ id: 'reply-id', role: 'assistant', content: '先调查', createdAt: teacher.createdAt, thinkingMode: 'mao-selected-works' });
+    const i = changeThinkingMode(teacher, 'default'); const fetcher = respond();
+    await requestAI(i, settings(), 'chat');
+    const body = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(body.messages[0].content).toContain('当前思维模式：默认');
+    expect(body.messages[0].content).not.toContain('资料：'); expect(body.messages[0].content).toContain('不覆盖本次选择');
+    const payload = JSON.parse(body.messages[1].content);
+    expect(payload.thinking_mode).toBe('default'); expect(payload.conversation[2].thinking_mode).toBe('mao-selected-works');
+    expect(payload.conversation.map((m: { content: string }) => m.content)).toEqual(i.messages.map(m => m.content));
+  });
+  it('请求长度计算包含模式资料，过长时不调用服务', async () => {
+    const i = idea(); i.messages = [userMessage('问'.repeat(110_000))]; const fetcher = respond();
+    await requestAI(i, settings(), 'chat');
+    await expect(requestAI(changeThinkingMode(i, 'mao-selected-works'), settings(), 'chat')).rejects.toThrow('模式资料超过');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('资料加载前或加载期间取消，均不发送付费模型请求', async () => {
+    const i = changeThinkingMode(idea(), 'mao-selected-works'); const fetcher = respond();
+    const before = new AbortController(); before.abort();
+    await expect(requestAI(i, settings(), 'chat', { signal: before.signal })).rejects.toThrow('已取消');
+    const during = new AbortController(); const pending = requestAI(i, settings(), 'chat', { signal: during.signal }); during.abort();
+    await expect(pending).rejects.toThrow('已取消'); expect(fetcher).not.toHaveBeenCalled();
+  });
 });

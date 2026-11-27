@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { ChevronDown, ChevronUp, Sparkles, Trash2 } from 'lucide-react';
 import type { Message } from '../types';
+import { thinkingModeLabel } from '../thinking-modes';
 import { Markdown } from './Markdown';
 
 export function replyPreview(content: string): string {
@@ -14,11 +15,12 @@ export function MessageView({ message, time, onToggle, onDelete, storageBlocked,
   storageBlocked: boolean; deleteDisabled: boolean;
 }) {
   const contentId = useId();
+  if (message.role === 'mode-change') return <div className="mode-change"><span>{message.content}</span><time dateTime={message.createdAt}>{time}</time></div>;
   const assistant = message.role === 'assistant';
   return <article className={`message ${message.role}`}>
     <div className={`avatar ${message.role}`}>{assistant ? <Sparkles size={17} /> : '我'}</div>
     <div className="message-main">
-      <div className="message-label"><span>{assistant ? '思考伙伴' : '我'}</span><time>{time}</time>
+      <div className="message-label"><span>{assistant ? `思考伙伴${message.thinkingMode ? ` · ${thinkingModeLabel(message.thinkingMode)}` : ''}` : '我'}</span><time dateTime={message.createdAt}>{time}</time>
         {assistant && <div className="message-actions">
           <button aria-label={message.collapsed ? '展开 AI 回复' : '折叠 AI 回复'} aria-expanded={!message.collapsed} aria-controls={contentId} disabled={storageBlocked} onClick={onToggle}>
             {message.collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}{message.collapsed ? '展开' : '折叠'}
