@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Archive, Check, ChevronDown, ChevronUp, Circle, Clock3, Download, FileText, FolderOpen, History, Leaf, Lightbulb, LoaderCircle, Menu, MessageCircle, MoreHorizontal, PencilLine, Plus, Search, Settings2, ShieldCheck, Sparkles, Trash2, Upload, X } from 'lucide-react';
-import { archive, archiveDraftIsStale, backup, changeThinkingMode, DATA_KEY, download, editVersion, exportMarkdown, fullTime, loadIdeas, loadSettings, mergeBackup, newIdea, parseBackup, safeFilename, saveSettings, timeLabel, uid, userMessage } from './data';
+import { archive, archiveDraftIsStale, backup, changeThinkingMode, DATA_KEY, download, editVersion, exportMarkdown, fullTime, loadIdeas, loadSettings, mergeBackup, newIdea, parseBackup, safeFilename, sameDiscussion, saveSettings, timeLabel, uid, userMessage } from './data';
 import { providers, requestAI } from './ai';
 import { Markdown } from './components/Markdown';
+import { replyPreview } from './components/MessageView';
 import { Modal } from './components/Modal';
 import { SettingsDialog } from './components/SettingsDialog';
 import { PlanEditor } from './components/PlanEditor';
@@ -10,7 +11,7 @@ import { ConversationMessage } from './components/ConversationMessage';
 import { thinkingModes, thinkingModeLabel } from './thinking-modes';
 import type { AIAction, ConversationMode, Idea, PlanVersion, Settings, ThinkingMode } from './types';
 
-type Dialog = 'settings' | 'backup' | 'rename' | 'delete' | 'archive' | 'edit' | 'snapshot' | null;
+type Dialog = 'settings' | 'backup' | 'rename' | 'delete' | 'archive' | 'edit' | 'snapshot' | 'deleteReply' | null;
 const conversationModes: { value: ConversationMode; label: string; hint: string }[] = [
   { value: 'silent', label: '静默', hint: '只记录你的想法，AI 暂不回应。' },
   { value: 'concise', label: '简洁', hint: 'AI 通常用 1–3 句给出关键引导，需要时可要求展开。' },
@@ -40,6 +41,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 680);
   const sidebarRef = useRef<HTMLElement>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ ideaId: string; messageId: string } | null>(null);
   const [homeInput, setHomeInput] = useState('');
   const [rename, setRename] = useState('');
   const [editing, setEditing] = useState({ title: '', content: '' });
@@ -59,7 +61,8 @@ export default function App() {
   const archivedCount = ideas.filter(i => i.versions.length).length;
   const totalVersions = ideas.reduce((n, i) => n + i.versions.length, 0);
   const ready = !!settings.keys[settings.provider].trim();
-  const unsummarized = active && (active.messages.length !== (active.versions.at(-1)?.snapshot.length ?? 0));
+  const unsummarized = active && !sameDiscussion(active.messages, active.versions.at(-1)?.snapshot ?? []);
+  const replyToDelete = active?.id === deleteTarget?.ideaId ? active?.messages.find(m => m.id === deleteTarget?.messageId && m.role === 'assistant') : undefined;
 
   function flash(text: string) { setNotice(text); }
   function commit(next: Idea[], force = false): boolean {
@@ -141,6 +144,24 @@ export default function App() {
     if (!messageCount) { setError('先聊一聊你的想法，再生成方案。'); return; }
     void runAI(active, 'archive');
   }
+  function toggleReply(ideaId: string, messageId: string, versionId?: string) {
+    const toggle = (messages: Idea['messages']) => messages.map(m => {
+      if (m.id !== messageId || m.role !== 'assistant') return m;
+      const { collapsed, ...message } = m;
+      return collapsed ? message : { ...message, collapsed: true as const };
+    });
+    update(ideaId, i => versionId
+      ? { ...i, versions: i.versions.map(v => v.id === versionId ? { ...v, snapshot: toggle(v.snapshot) } : v) }
+      : { ...i, messages: toggle(i.messages) });
+  }
+  function deleteReply() {
+    if (!active || !deleteTarget || active.id !== deleteTarget.ideaId || !replyToDelete || busy?.ideaId === active.id || blockedRef.current) return;
+    if (update(active.id, i => ({ ...i, messages: i.messages.filter(m => m.id !== deleteTarget.messageId), updatedAt: new Date().toISOString() }))) {
+      setDialog(null); setDeleteTarget(null);
+      if (retry?.ideaId === active.id) setRetry(null);
+      setError(''); flash('AI 回复已删除');
+    }
+  }
   function confirmArchive() {
     if (!active?.archiveDraft) return;
     if (archiveDraftIsStale(active)) { setError('讨论或思维模式已变化，请先按最新讨论和模式重新生成，再确认归档。'); return; }
@@ -209,7 +230,7 @@ export default function App() {
     setDialog(null); setError('');
   }
   const visible = [...ideas].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).filter(i => {
-    const matchesFilter = filter === 'all' || (filter === 'archived' ? !!i.versions.length : !i.versions.length || i.messages.length !== i.versions.at(-1)?.snapshot.length);
+    const matchesFilter = filter === 'all' || (filter === 'archived' ? !!i.versions.length : !i.versions.length || !sameDiscussion(i.messages, i.versions.at(-1)?.snapshot ?? []));
     const q = query.trim().toLocaleLowerCase();
     return matchesFilter && (!q || [i.title, i.input, ...i.messages.map(m => m.content), ...i.versions.flatMap(v => [v.title, v.content])].some(text => text.toLocaleLowerCase().includes(q)));
   });
@@ -248,7 +269,7 @@ export default function App() {
       </div> : <div className="idea-workspace">
         {tab === 'chat' ? <div className="chat-layout"><section className="conversation"><div className="message-scroll">
           <div className="conversation-start"><span><Sparkles size={16} /></span><p>这里是你的思考空间</p><small>不着急得到答案，先从你的想法开始。</small></div>
-          {active.messages.map(m => <ConversationMessage key={m.id} message={m} />)}
+          {active.messages.map(m => <ConversationMessage key={m.id} message={m} storageBlocked={!!storageError} deleteDisabled={busy?.ideaId === active.id} onToggle={() => toggleReply(active.id, m.id)} onDelete={() => { if (busy?.ideaId === active.id || blockedRef.current) return; setDeleteTarget({ ideaId: active.id, messageId: m.id }); setDialog('deleteReply'); }} />)}
           {busy?.ideaId === active.id && <div className="thinking"><LoaderCircle size={17} className="spin" /><span>{busy.action === 'archive' ? '正在整理你的可执行方案…' : '正在认真想一想…'}</span><button className="text-button" onClick={() => cancelRequest()}>取消</button></div>}
           {((retry?.ideaId === active.id && retry.action === 'archive') || (active.mode !== 'silent' && (retry?.ideaId === active.id || lastMessage?.role === 'user'))) && !busy && <button className="button secondary retry-button" disabled={!!storageError} onClick={() => void runAI(active, retry?.ideaId === active.id ? retry.action : 'chat')}><ArrowRight size={15} />{retry?.ideaId === active.id && retry.action === 'archive' ? '重试生成方案' : lastMessage?.silent && retry?.ideaId !== active.id ? '让 AI 回应' : '继续 / 重试 AI 回复'}</button>}
           {!messageCount && <div className="chat-welcome"><p>你想创造什么，或者解决什么问题？</p><span>一个粗略的念头也足够开始。</span></div>}
@@ -306,8 +327,9 @@ export default function App() {
     {dialog === 'backup' && <Modal title="备份与恢复" onClose={closeDialog}><p className="muted">把全部灵感、持续会话、方案版本和草稿打包保存。可手动带到另一个设备或浏览器。</p><div className="backup-card"><div className="backup-icon"><Download size={23} /></div><div><h3>完整 JSON 备份</h3><p>{ideas.length} 条灵感 · {totalVersions} 个方案版本<br />不包含 API 密钥。</p></div><button className="button primary" onClick={downloadBackup}>下载备份</button></div><div className="backup-card"><div className="backup-icon"><Upload size={23} /></div><div><h3>从备份恢复</h3><p>合并导入，已有内容保留。<br />有差异的同名记录保存为副本。</p></div><button className="button secondary" onClick={() => fileInput.current?.click()}>选择文件</button></div>{initial.raw && initial.error && storageError && <div className="recovery-section"><h3>原始数据恢复</h3><p>原始本地数据无法解析，先下载以便恢复。</p><button className="button secondary" onClick={() => download(initial.raw!, '拾念-原始数据.json')}>下载原始数据</button><button className="text-button danger-text" onClick={() => { if (window.confirm('确定清空无法读取的本地数据？请先下载原始数据备份。')) { if (commit([], true)) setDialog(null); } }}>清空并重新开始</button></div>}{(error || storageError) && <p className="error-text" role="alert">{error || storageError}</p>}<div className="privacy-note"><ShieldCheck size={18} /><p>Markdown 导出在每个方案版本中提供。JSON 用于完整恢复；清除网站数据会删除本地记录，建议定期备份。</p></div></Modal>}
     {dialog === 'rename' && active && <Modal title="重命名灵感" onClose={closeDialog}><form onSubmit={e => { e.preventDefault(); if (!rename.trim()) return; if (update(active.id, i => ({ ...i, title: rename.trim(), updatedAt: new Date().toISOString() }))) { setDialog(null); flash('标题已更新'); } }}><label htmlFor="idea-title" className="field-label">灵感标题</label><input id="idea-title" autoFocus required maxLength={120} value={rename} onChange={e => setRename(e.target.value)} /><footer className="modal-actions"><button type="button" className="button secondary" onClick={closeDialog}>取消</button><button type="submit" className="button primary">保存标题</button></footer></form></Modal>}
     {dialog === 'delete' && active && <Modal title="删除这个灵感？" onClose={closeDialog}><p>“{active.title}”的完整会话、草稿及 {active.versions.length} 个版本将从当前浏览器删除。建议先下载备份。</p><footer className="modal-actions"><button className="button secondary" autoFocus onClick={closeDialog}>保留灵感</button><button className="button danger" onClick={() => { if (commit(ideasRef.current.filter(i => i.id !== active.id))) { select(null); flash('灵感已删除'); } }}><Trash2 size={15} />确认删除</button></footer></Modal>}
+    {dialog === 'deleteReply' && replyToDelete && <Modal title="删除这条 AI 回复？" onClose={closeDialog}><p>确认后，这条回复将从当前对话及后续 AI 对话上下文中移除，无法撤销。你的提问、后续消息及已归档的方案和历史快照会保留。</p><blockquote className="delete-reply-preview">{replyPreview(replyToDelete.content)}</blockquote>{(error || storageError) && <p role="alert" className="error-text">{error || storageError}</p>}<footer className="modal-actions"><button className="button secondary" autoFocus onClick={closeDialog}>保留回复</button><button className="button danger" disabled={busy?.ideaId === active?.id || !!storageError} onClick={deleteReply}><Trash2 size={15} />确认删除</button></footer></Modal>}
     {dialog === 'archive' && active?.archiveDraft && <Modal title={`归档草稿 · 即将保存为 V${(active.versions.at(-1)?.number ?? 0) + 1}`} wide onClose={closeDialog}><p className="muted">先检查内容，再确认归档。草稿自动保存，关闭后可以继续编辑。生成模式：{thinkingModeLabel(active.archiveDraft.thinkingMode ?? 'default')}。</p>{archiveDraftIsStale(active) && <div className="stale-draft"><p>这份草稿生成后，讨论或思维模式发生了变化，尚未包含在草稿或快照中。</p><button className="button secondary" disabled={!!storageError} onClick={() => { setDialog(null); void runAI(active, 'archive'); }}>按最新讨论和模式重新生成</button></div>}<PlanEditor title={active.archiveDraft.title} content={active.archiveDraft.content} onChange={(title, content) => update(active.id, i => ({ ...i, archiveDraft: { ...i.archiveDraft!, title, content } }))} />{error && <p role="alert" className="error-text">{error}</p>}<footer className="modal-actions"><button className="text-button danger-text" disabled={!!storageError} onClick={() => { if (window.confirm('丢弃当前方案草稿？会话和已归档版本会保留。')) { update(active.id, i => ({ ...i, archiveDraft: undefined })); setDialog(null); } }}>丢弃草稿</button><div className="action-spacer" /><button className="button secondary" onClick={closeDialog}>稍后继续</button><button className="button primary" disabled={!active.archiveDraft.title.trim() || !active.archiveDraft.content.trim() || archiveDraftIsStale(active) || !!storageError} onClick={confirmArchive}><Archive size={15} />确认归档</button></footer></Modal>}
     {dialog === 'edit' && version && <Modal title={`编辑 V${version.number}`} wide onClose={closeDialog}><p className="muted">保存后仍为 V{version.number}。归档时间与讨论快照保留不变。</p><PlanEditor title={editing.title} content={editing.content} onChange={(title, content) => setEditing({ title, content })} />{error && <p role="alert" className="error-text">{error}</p>}<footer className="modal-actions"><button className="button secondary" onClick={closeDialog}>取消</button><button className="button primary" disabled={!editing.title.trim() || !editing.content.trim() || !!storageError} onClick={saveEdited}>保存修改</button></footer></Modal>}
-    {dialog === 'snapshot' && version && <Modal title={`V${version.number} · 归档时的讨论快照`} wide onClose={closeDialog}><p className="snapshot-notice"><History size={16} />这是只读的历史记录。新讨论会继续接在当前会话之后。</p><div className="snapshot-messages">{version.snapshot.length ? version.snapshot.map(m => <ConversationMessage key={m.id} message={m} snapshot />) : <p className="muted">此版本没有会话快照。</p>}</div></Modal>}
+    {dialog === 'snapshot' && version && <Modal title={`V${version.number} · 归档时的讨论快照`} wide onClose={closeDialog}><p className="snapshot-notice"><History size={16} />这是只读的历史记录。新讨论会继续接在当前会话之后。</p><div className="snapshot-messages">{version.snapshot.length ? version.snapshot.map(m => <ConversationMessage key={m.id} message={m} snapshot storageBlocked={!!storageError} onToggle={() => toggleReply(active!.id, m.id, version.id)} />) : <p className="muted">此版本没有会话快照。</p>}</div></Modal>}
   </div>;
 }

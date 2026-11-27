@@ -3,9 +3,9 @@ export type { ThinkingMode } from './thinking-modes';
 export type Provider = 'deepseek' | 'minimax';
 export type ConversationMode = 'silent' | 'concise' | 'detailed';
 export type Message = { id: string; content: string; createdAt: string } & (
-  | { role: 'user'; silent?: true; thinkingMode?: never }
-  | { role: 'assistant'; silent?: never; thinkingMode?: ThinkingMode }
-  | { role: 'mode-change'; silent?: never; thinkingMode: ThinkingMode }
+  | { role: 'user'; silent?: true; thinkingMode?: never; collapsed?: never }
+  | { role: 'assistant'; silent?: never; thinkingMode?: ThinkingMode; collapsed?: true }
+  | { role: 'mode-change'; silent?: never; thinkingMode: ThinkingMode; collapsed?: never }
 );
 export type PlanVersion = {
   id: string; number: number; title: string; content: string;

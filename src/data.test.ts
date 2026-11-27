@@ -88,7 +88,7 @@ describe('思维模式与历史兼容', () => {
   });
   it('模式、切换记录、历史回答及归档模式随备份和 Markdown 保存', () => {
     const selected = changeThinkingMode(newIdea('模式备份'), 'mao-selected-works');
-    selected.messages.push(userMessage('如何推进'), { id: 'reply-id', role: 'assistant', content: '先调查实际障碍。', createdAt: selected.createdAt, thinkingMode: 'mao-selected-works' });
+    selected.messages.push(userMessage('如何推进'), { id: 'reply-id', role: 'assistant', content: '先调查实际障碍。', createdAt: selected.createdAt, thinkingMode: 'mao-selected-works', collapsed: true });
     const draft = { ...draftFor('阶段方案'), snapshot: selected.messages, thinkingMode: selected.thinkingMode };
     const archived = archive(selected, draft); archived.archiveDraft = draft;
     expect(parseBackup(JSON.stringify(backup([archived])))).toEqual([archived]);
@@ -118,4 +118,12 @@ describe('思维模式与历史兼容', () => {
     ];
     for (const value of invalid) expect(() => parseBackup(JSON.stringify(backup([value as typeof i])))).toThrow('数据格式无效');
   });
+});
+
+it('折叠状态随备份和旧数据恢复，拒绝用户消息和非法折叠字段', () => {
+  const i = newIdea('折叠备份'); i.messages = [{ id: 'ai', role: 'assistant', content: '完整回复', createdAt: i.createdAt, collapsed: true }];
+  const saved = archive(i, { title: '方案', content: '正文', createdAt: i.createdAt, snapshot: i.messages });
+  expect(parseBackup(JSON.stringify(backup([saved])))).toEqual([saved]);
+  expect(() => parseBackup(JSON.stringify(backup([{ ...i, messages: [{ ...i.messages[0], collapsed: false }] } as unknown as typeof i])))).toThrow();
+  expect(() => parseBackup(JSON.stringify(backup([{ ...i, messages: [{ ...i.messages[0], role: 'user' }] } as typeof i])))).toThrow();
 });

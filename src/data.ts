@@ -18,9 +18,16 @@ export function changeThinkingMode(idea: Idea, thinkingMode: ThinkingMode): Idea
   const marker: Message = { id: uid(), role: 'mode-change', content: `思维模式已切换为${thinkingModeLabel(thinkingMode)}`, createdAt: now, thinkingMode };
   return { ...idea, thinkingMode, updatedAt: now, messages: [...idea.messages, marker] };
 }
+// Presentation changes do not make a discussion or archive draft stale.
+export function sameDiscussion(messages: Message[], snapshot: Message[]): boolean {
+  return messages.length === snapshot.length && messages.every((m, index) => {
+    const saved = snapshot[index];
+    return m.id === saved.id && m.role === saved.role && m.content === saved.content && m.createdAt === saved.createdAt && m.silent === saved.silent && m.thinkingMode === saved.thinkingMode;
+  });
+}
 export function archiveDraftIsStale(idea: Idea): boolean {
   const draft = idea.archiveDraft;
-  return !!draft && ((draft.thinkingMode ?? 'default') !== idea.thinkingMode || draft.snapshot.length !== idea.messages.length || draft.snapshot.some((m, index) => m.id !== idea.messages[index]?.id));
+  return !!draft && ((draft.thinkingMode ?? 'default') !== idea.thinkingMode || !sameDiscussion(idea.messages, draft.snapshot));
 }
 export function archive(idea: Idea, draft: ArchiveDraft): Idea {
   if (!draft.title.trim() || !draft.content.trim()) throw new Error('请填写方案标题和正文。');
@@ -46,7 +53,8 @@ function validMessages(v: unknown): v is Message[] {
   return Array.isArray(v) && v.every(m => obj(m) && str(m.id) && !!m.id && ['user', 'assistant', 'mode-change'].includes(String(m.role)) && str(m.content) && date(m.createdAt)
     && (m.silent === undefined || (m.silent === true && m.role === 'user'))
     && (m.thinkingMode === undefined || (m.role !== 'user' && isThinkingMode(m.thinkingMode)))
-    && (m.role !== 'mode-change' || isThinkingMode(m.thinkingMode))) && unique(v);
+    && (m.role !== 'mode-change' || isThinkingMode(m.thinkingMode))
+    && (m.collapsed === undefined || (m.collapsed === true && m.role === 'assistant'))) && unique(v);
 }
 function validDraft(v: unknown): v is ArchiveDraft {
   return obj(v) && str(v.title) && str(v.content) && date(v.createdAt) && validMessages(v.snapshot) && (v.thinkingMode === undefined || isThinkingMode(v.thinkingMode));
@@ -71,7 +79,7 @@ export function validateIdeas(value: unknown): Idea[] {
 function cleanMessage(m: Message): Message {
   const base = { id: m.id, content: m.content, createdAt: m.createdAt };
   if (m.role === 'mode-change') return { ...base, role: m.role, thinkingMode: m.thinkingMode };
-  if (m.role === 'assistant') return { ...base, role: m.role, ...(m.thinkingMode ? { thinkingMode: m.thinkingMode } : {}) };
+  if (m.role === 'assistant') return { ...base, role: m.role, ...(m.thinkingMode ? { thinkingMode: m.thinkingMode } : {}), ...(m.collapsed ? { collapsed: true } : {}) };
   return { ...base, role: m.role, ...(m.silent ? { silent: true } : {}) };
 }
 function cleanDraft(draft: ArchiveDraft): ArchiveDraft {

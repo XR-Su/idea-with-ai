@@ -153,7 +153,7 @@ it('草稿生成后新增讨论，必须更新草稿后才能归档', () => {
   const i = newIdea('过期草稿'); const initial = userMessage('旧讨论'); i.messages = [initial, userMessage('新讨论')]; i.archiveDraft = { title: '旧草稿', content: '旧内容', createdAt: i.createdAt, snapshot: [initial] };
   localStorage.setItem(DATA_KEY, JSON.stringify([i])); render(<App />); openIdea(i.title);
   fireEvent.click(screen.getByRole('button', { name: '继续编辑草稿' }));
-  expect((screen.getByRole('button', { name: '确认归档' }) as HTMLButtonElement).disabled).toBe(true); expect(screen.getByText(/尚未包含在草稿或快照中/)).toBeDefined(); expect(stored()[0].versions).toHaveLength(0);
+  expect((screen.getByRole('button', { name: '确认归档' }) as HTMLButtonElement).disabled).toBe(true); expect(screen.getByText(/讨论或思维模式发生了变化/)).toBeDefined(); expect(stored()[0].versions).toHaveLength(0);
 });
 it('切换会话会取消旧请求，迟到回复不能污染任何会话', async () => {
   configure(); const one = newIdea('会话一'); const two = newIdea('会话二'); localStorage.setItem(DATA_KEY, JSON.stringify([one, two]));
@@ -274,4 +274,106 @@ it('请求期间不能切换思维模式，取消后可切换并保留未回复�
   fireEvent.click(screen.getByRole('button', { name: '取消' })); chooseMode('思维模式', 'mao-selected-works');
   expect(stored()[0].messages[0].content).toBe('待分析的问题');
   expect(screen.getByRole('button', { name: '继续 / 重试 AI 回复' })).toBeTruthy();
+});
+
+function answeredIdea(): Idea {
+  const idea = newIdea('回复操作测试');
+  idea.messages = [userMessage('原始提问'), { id: 'assistant-one', role: 'assistant', content: '回复开头。' + '详细分析。'.repeat(40) + '回复末尾。', createdAt: idea.createdAt }];
+  return idea;
+}
+it('教员回复折叠后保留模式标签，折叠不使草稿过期，切换模式仍要求重新生成', () => {
+  const i = answeredIdea(); i.thinkingMode = 'mao-selected-works';
+  i.messages = i.messages.map(m => m.role === 'assistant' ? { ...m, thinkingMode: 'mao-selected-works' } : m);
+  i.archiveDraft = { title: '教员草稿', content: '待确认方案', createdAt: i.createdAt, snapshot: i.messages.map(m => ({ ...m })), thinkingMode: i.thinkingMode };
+  localStorage.setItem(DATA_KEY, JSON.stringify([i])); const request = vi.spyOn(ai, 'requestAI');
+  render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '折叠 AI 回复' }));
+  expect(screen.getByText('思考伙伴 · 教员')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '继续编辑草稿' }));
+  expect((screen.getByRole('button', { name: '确认归档' }) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: '稍后继续' })); chooseMode('思维模式', 'default');
+  expect(screen.getByText('思维模式已切换为默认')).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: '展开 AI 回复' })).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '继续编辑草稿' }));
+  expect((screen.getByRole('button', { name: '确认归档' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(request).not.toHaveBeenCalled();
+  cleanup(); render(<App />); openIdea(i.title);
+  expect(screen.getByText('思考伙伴 · 教员')).toBeTruthy(); expect(screen.getByRole('button', { name: '展开 AI 回复' })).toBeTruthy();
+});
+it('AI 回复独立折叠，切换和刷新后保留，并可展开完整正文', () => {
+  const i = answeredIdea(); const other = newIdea('另一个会话');
+  i.messages.push({ id: 'assistant-two', role: 'assistant', content: '第二条回复', createdAt: i.createdAt });
+  localStorage.setItem(DATA_KEY, JSON.stringify([i, other])); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getAllByRole('button', { name: '折叠 AI 回复' })[0]);
+  expect(screen.queryByText(/回复末尾/)).toBeNull(); expect(screen.getByText('第二条回复')).toBeDefined();
+  expect(screen.getByRole('button', { name: '展开 AI 回复' }).getAttribute('aria-expanded')).toBe('false');
+  expect(stored()[0].updatedAt).toBe(i.updatedAt);
+  openIdea(other.title); openIdea(i.title); expect(screen.getByRole('button', { name: '展开 AI 回复' })).toBeDefined();
+  cleanup(); render(<App />); openIdea(i.title); expect(screen.queryByText(/回复末尾/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '展开 AI 回复' })); expect(screen.getByText(/回复末尾/)).toBeDefined();
+  expect(stored()[0].messages[1].collapsed).toBeUndefined();
+});
+it('删除需确认，保留提问和后续消息，下一次请求排除被删回复', async () => {
+  configure(); const i = answeredIdea(); i.messages.push(userMessage('后续提问'));
+  const archived = archive(i, { ...plan, content: '保留的归档正文', createdAt: i.createdAt, snapshot: i.messages });
+  localStorage.setItem(DATA_KEY, JSON.stringify([archived]));
+  const request = vi.spyOn(ai, 'requestAI').mockResolvedValue(reply); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '删除 AI 回复' }));
+  expect(screen.getByRole('dialog').textContent).toContain('回复开头'); expect(stored()[0].messages).toHaveLength(3);
+  fireEvent.click(screen.getByRole('button', { name: '保留回复' })); expect(stored()[0].messages).toHaveLength(3);
+  fireEvent.click(screen.getByRole('button', { name: '删除 AI 回复' })); fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+  expect(stored()[0].messages.map(m => m.content)).toEqual(['原始提问', '后续提问']);
+  expect(stored()[0].versions).toEqual(archived.versions);
+  fireEvent.click(screen.getByRole('button', { name: '继续 / 重试 AI 回复' })); await screen.findByText(reply.reply);
+  expect(request.mock.calls[0][0].messages.map(m => m.content)).toEqual(['原始提问', '后续提问']);
+});
+it('删除末尾回复后可重试原提问，AI 请求中禁止删除但仍可折叠', async () => {
+  configure(); const i = answeredIdea(); localStorage.setItem(DATA_KEY, JSON.stringify([i]));
+  const request = vi.spyOn(ai, 'requestAI').mockImplementation(() => new Promise(() => {}));
+  render(<App />); openIdea(i.title); send('新的提问');
+  expect((screen.getByRole('button', { name: '删除 AI 回复' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '折叠 AI 回复' })); expect(screen.getByRole('button', { name: '展开 AI 回复' })).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  expect((screen.getByRole('button', { name: '删除 AI 回复' }) as HTMLButtonElement).disabled).toBe(false);
+  cleanup(); localStorage.setItem(DATA_KEY, JSON.stringify([i])); request.mockResolvedValue(reply); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '删除 AI 回复' })); fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+  fireEvent.click(screen.getByRole('button', { name: '继续 / 重试 AI 回复' })); await screen.findByText(reply.reply);
+  expect(stored()[0].messages.filter(m => m.role === 'user')).toHaveLength(1);
+  expect(request.mock.calls.at(-1)![0].messages.map(m => m.content)).toEqual(['原始提问']);
+});
+it('历史回复只允许折叠，独立保存状态且不改变导出正文和归档时间', () => {
+  const i = answeredIdea(); const saved = archive(i, { title: '历史方案', content: '方案正文', createdAt: i.createdAt, snapshot: i.messages });
+  localStorage.setItem(DATA_KEY, JSON.stringify([saved])); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: /方案版本/ })); fireEvent.click(screen.getByRole('button', { name: '讨论快照' }));
+  const dialog = within(screen.getByRole('dialog')); expect(dialog.queryByRole('button', { name: '删除 AI 回复' })).toBeNull();
+  fireEvent.click(dialog.getByRole('button', { name: '折叠 AI 回复' }));
+  expect(stored()[0].messages[1].collapsed).toBeUndefined(); expect(stored()[0].versions[0].snapshot[1].collapsed).toBe(true);
+  expect(stored()[0].versions[0].updatedAt).toBe(saved.versions[0].updatedAt);
+  expect(data.exportMarkdown(stored()[0].versions[0], true)).toBe(data.exportMarkdown(saved.versions[0], true));
+  cleanup(); render(<App />); openIdea(i.title); fireEvent.click(screen.getByRole('button', { name: /方案版本/ })); fireEvent.click(screen.getByRole('button', { name: '讨论快照' }));
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: '展开 AI 回复' })).toBeDefined();
+});
+it('折叠不使草稿失效，删除并添加相同数量的消息后必须重新生成草稿', async () => {
+  const i = answeredIdea(); i.archiveDraft = { title: '待归档', content: '草稿正文', createdAt: i.createdAt, snapshot: i.messages.map(m => ({ ...m })) };
+  localStorage.setItem(DATA_KEY, JSON.stringify([i])); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '折叠 AI 回复' })); fireEvent.click(screen.getByRole('button', { name: '继续编辑草稿' }));
+  expect((screen.getByRole('button', { name: '确认归档' }) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: '稍后继续' })); fireEvent.click(screen.getByRole('button', { name: '删除 AI 回复' })); fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+  chooseMode('回应模式', 'silent'); send('替换后的讨论');
+  expect(stored()[0].messages).toHaveLength(i.archiveDraft.snapshot.length);
+  fireEvent.click(screen.getByRole('button', { name: '继续编辑草稿' }));
+  expect((screen.getByRole('button', { name: '确认归档' }) as HTMLButtonElement).disabled).toBe(true);
+  configure(); cleanup(); const request = vi.spyOn(ai, 'requestAI').mockResolvedValue(plan); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '继续编辑草稿' })); fireEvent.click(screen.getByRole('button', { name: '按最新讨论和模式重新生成' }));
+  await screen.findByRole('button', { name: '确认归档' });
+  expect(request.mock.calls[0][0].messages.map(m => m.content)).toEqual(['原始提问', '替换后的讨论']);
+  fireEvent.click(screen.getByRole('button', { name: '确认归档' })); expect(stored()[0].versions).toHaveLength(1);
+});
+it('删除确认时遇到其它页面修改数据，不覆盖数据且保留回复', () => {
+  const i = answeredIdea(); localStorage.setItem(DATA_KEY, JSON.stringify([i])); render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '删除 AI 回复' }));
+  const changed = JSON.stringify([{ ...i, title: '其它页面的新标题' }]); localStorage.setItem(DATA_KEY, changed);
+  fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
+  expect(localStorage.getItem(DATA_KEY)).toBe(changed); expect(screen.getByRole('dialog')).toBeDefined(); expect(screen.getByText(/回复末尾/)).toBeDefined();
+  expect((screen.getByRole('button', { name: '确认删除' }) as HTMLButtonElement).disabled).toBe(true);
 });
