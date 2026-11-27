@@ -64,6 +64,51 @@
 .composer textarea:focus-visible {
   outline: none;
 }
+.conversation-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+.conversation-modes legend {
+  float: left;
+  margin-right: 10px;
+  font-size: 11px;
+  line-height: 36px;
+  color: #53664a;
+}
+.conversation-modes label { position: relative; cursor: pointer; }
+.conversation-modes input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: inherit;
+}
+.conversation-modes span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #53664a;
+}
+.conversation-modes .selected span { background: #eaf0e1; border-color: #d7e1c8; color: #344e3b; font-weight: 600; }
+.conversation-modes input:focus-visible + span { outline: 2px solid #678557; outline-offset: 2px; }
+.conversation-modes:disabled { opacity: .5; }
+.conversation-modes:disabled label { cursor: not-allowed; }
+@media (max-width: 680px) {
+  .conversation-modes span { min-height: 44px; }
+  .conversation-modes legend { line-height: 44px; }
+}
 @media (max-width: 680px) {
   .capture-card { padding: 20px 18px 18px; }
   .capture-label { font-size: 12px; gap: 7px 12px; }

@@ -11,6 +11,21 @@ function respond(content = JSON.stringify(result), status = 200, finishReason = 
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe('模型请求与上下文', () => {
+  it.each(['deepseek', 'minimax'] as const)('%s 的简洁模式使用短回复引导，详细模式与方案保持原提示', async provider => {
+    const i = idea(); i.mode = 'concise'; const fetcher = respond();
+    await requestAI(i, settings(provider), 'chat');
+    const concise = JSON.parse(fetcher.mock.calls[0][1].body).messages[0].content;
+    expect(concise).toContain('通常只回复 1–3 句'); expect(concise).toContain('用户最新输入明确要求展开');
+    i.mode = 'detailed'; await requestAI(i, settings(provider), 'chat');
+    expect(JSON.parse(fetcher.mock.calls[1][1].body).messages[0].content).not.toContain('当前为简洁模式');
+    i.mode = 'silent'; await requestAI(i, settings(provider), 'archive');
+    const archivePrompt = JSON.parse(fetcher.mock.calls[2][1].body).messages[0].content;
+    expect(archivePrompt).toContain('生成方案草稿'); expect(archivePrompt).not.toContain('当前为简洁模式');
+  });
+  it('静默聊天在请求层也不会调用服务', async () => {
+    const i = idea(); i.mode = 'silent'; const fetcher = respond();
+    await expect(requestAI(i, settings(), 'chat')).rejects.toThrow('静默模式'); expect(fetcher).not.toHaveBeenCalled();
+  });
   it.each(['deepseek', 'minimax'] as const)('使用 %s 独立参数和密钥', async provider => {
     const fetcher = respond(); await expect(requestAI(idea(), settings(provider), 'chat')).resolves.toEqual({ reply: result.reply, title: '', markdown: '' });
     const [url, init] = fetcher.mock.calls[0]; const body = JSON.parse(init.body);

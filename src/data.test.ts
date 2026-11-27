@@ -25,6 +25,14 @@ describe('单一会话与版本', () => {
   });
 });
 describe('导出和恢复', () => {
+  it('模式和静默内容随备份恢复，旧数据默认详细且不会产生恢复副本', () => {
+    const i = newIdea('模式测试'); i.mode = 'silent'; i.messages = [userMessage('记录内容', true)];
+    expect(parseBackup(JSON.stringify(backup([i])))).toEqual([i]);
+    const legacy = { ...i, messages: [userMessage('旧内容')] } as Partial<typeof i>; delete legacy.mode;
+    const restored = parseBackup(JSON.stringify(backup([legacy as typeof i])));
+    expect(restored[0].mode).toBe('detailed'); expect(mergeBackup([legacy as typeof i], restored)).toHaveLength(1);
+    expect(() => parseBackup(JSON.stringify(backup([{ ...i, mode: 'invalid' } as unknown as typeof i])))).toThrow();
+  });
   it('完整备份往返保留草稿、版本、快照和输入；冲突保留两份', () => {
     const i = archive(newIdea('灵感'), draftFor('## 步骤\n- [ ] 执行'));
     i.input = '尚未发送'; i.archiveDraft = draftFor('还没确认');
