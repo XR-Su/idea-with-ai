@@ -133,6 +133,17 @@
   background: #f7f7f3;
 }
 .topbar { position: relative; }
+.message-label { flex-wrap: wrap; }
+.message-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.message-actions button { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 7px; border-radius: 6px; font-size: 11px; color: #687f56; }
+.message-actions button:hover { background: var(--soft); }
+.message-actions .message-delete { color: #a36a57; }
+.reply-preview { color: #748367; font-size: 12px; line-height: 1.8; padding: 10px 12px; border-left: 2px solid #d7e1c8; background: #f2f5e9; border-radius: 0 6px 6px 0; overflow-wrap: anywhere; }
+.delete-reply-preview { margin-top: 16px; padding: 12px 14px; background: #f2f5e9; border-left: 2px solid #d7e1c8; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 680px) {
+  .message-actions button { min-height: 44px; padding: 0 8px; }
+  .message-label .message-actions { gap: 0; }
+}
 .workspace-header-details {
   max-width: 1140px;
   margin: auto;

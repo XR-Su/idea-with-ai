@@ -11,6 +11,13 @@ export function newIdea(text = ''): Idea {
   return { id: uid(), title: text.trim().slice(0, 32) || '未命名灵感', createdAt: now, updatedAt: now, messages: [], input: text, mode: 'detailed', versions: [] };
 }
 export function userMessage(content: string, silent = false): Message { return { id: uid(), role: 'user', content: content.trim(), createdAt: new Date().toISOString(), ...(silent ? { silent: true } : {}) }; }
+// Presentation changes do not make a discussion or archive draft stale.
+export function sameDiscussion(messages: Message[], snapshot: Message[]): boolean {
+  return messages.length === snapshot.length && messages.every((m, index) => {
+    const saved = snapshot[index];
+    return m.id === saved.id && m.role === saved.role && m.content === saved.content && m.createdAt === saved.createdAt && m.silent === saved.silent;
+  });
+}
 export function archive(idea: Idea, draft: ArchiveDraft): Idea {
   if (!draft.title.trim() || !draft.content.trim()) throw new Error('请填写方案标题和正文。');
   const now = new Date().toISOString();
@@ -31,7 +38,7 @@ const str = (v: unknown): v is string => typeof v === 'string';
 const date = (v: unknown) => str(v) && Number.isFinite(Date.parse(v));
 const unique = (items: { id: string }[]) => new Set(items.map(v => v.id)).size === items.length;
 function validMessages(v: unknown): v is Message[] {
-  return Array.isArray(v) && v.every(m => obj(m) && str(m.id) && !!m.id && ['user', 'assistant'].includes(String(m.role)) && str(m.content) && date(m.createdAt) && (m.silent === undefined || (m.silent === true && m.role === 'user'))) && unique(v);
+  return Array.isArray(v) && v.every(m => obj(m) && str(m.id) && !!m.id && ['user', 'assistant'].includes(String(m.role)) && str(m.content) && date(m.createdAt) && (m.silent === undefined || (m.silent === true && m.role === 'user')) && (m.collapsed === undefined || (m.collapsed === true && m.role === 'assistant'))) && unique(v);
 }
 function validDraft(v: unknown): v is ArchiveDraft {
   return obj(v) && str(v.title) && str(v.content) && date(v.createdAt) && validMessages(v.snapshot);
@@ -53,7 +60,7 @@ export function validateIdeas(value: unknown): Idea[] {
     })), ...(i.archiveDraft ? { archiveDraft: { title: i.archiveDraft.title, content: i.archiveDraft.content, createdAt: i.archiveDraft.createdAt, snapshot: i.archiveDraft.snapshot.map(cleanMessage) } } : {}),
   }));
 }
-function cleanMessage(m: Message): Message { return { id: m.id, role: m.role, content: m.content, createdAt: m.createdAt, ...(m.silent ? { silent: true } : {}) }; }
+function cleanMessage(m: Message): Message { return { id: m.id, role: m.role, content: m.content, createdAt: m.createdAt, ...(m.silent ? { silent: true } : {}), ...(m.collapsed ? { collapsed: true } : {}) }; }
 export function loadIdeas(): { ideas: Idea[]; raw: string | null; error: string } {
   let raw: string | null = null;
   try { raw = localStorage.getItem(DATA_KEY); return { ideas: raw ? validateIdeas(JSON.parse(raw)) : [], raw, error: '' }; }
