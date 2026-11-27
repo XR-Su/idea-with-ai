@@ -31,6 +31,24 @@ function withVersions(): Idea {
   v1.messages.push(userMessage('第二阶段讨论'));
   return archive(v1, { title: '方案二', content: 'V2 方案正文', createdAt: idea.createdAt, snapshot: v1.messages });
 }
+it('模式设置可收起到发送按钮旁，保留当前配置和输入，收起后仍能按所选模式发送', async () => {
+  configure(); const i = newIdea('折叠设置'); i.thinkingMode = 'mao-selected-works'; i.mode = 'concise'; i.input = '尚未发送的问题';
+  localStorage.setItem(DATA_KEY, JSON.stringify([i])); const request = vi.spyOn(ai, 'requestAI').mockResolvedValue(reply);
+  render(<App />); openIdea(i.title);
+  fireEvent.click(screen.getByRole('button', { name: '收起模式设置，当前教员 · 简洁' }));
+  expect(screen.queryByRole('region', { name: '对话模式设置' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: '思维模式' })).toBeNull();
+  expect((screen.getByRole('textbox', { name: '会话输入' }) as HTMLTextAreaElement).value).toBe(i.input);
+  expect(screen.getByRole('button', { name: '展开模式设置，当前教员 · 简洁' }).getAttribute('aria-expanded')).toBe('false');
+  expect(request).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '展开模式设置，当前教员 · 简洁' }));
+  expect((screen.getByRole('combobox', { name: '思维模式' }) as HTMLSelectElement).value).toBe('mao-selected-works');
+  expect((screen.getByRole('combobox', { name: '回应模式' }) as HTMLSelectElement).value).toBe('concise');
+  fireEvent.click(screen.getByRole('button', { name: '收起模式设置，当前教员 · 简洁' }));
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' })); await screen.findByText(reply.reply);
+  expect(request).toHaveBeenCalledTimes(1); expect(request.mock.calls[0][0]).toMatchObject({ thinkingMode: 'mao-selected-works', mode: 'concise' });
+  expect(stored()[0].messages[0].content).toBe(i.input);
+});
 it('静默输入无需配置 AI，可连续保存；切回后主动回应包含全部内容', async () => {
   const request = vi.spyOn(ai, 'requestAI').mockResolvedValue(reply);
   render(<App />); fireEvent.click(screen.getByRole('button', { name: /新建灵感/ }));

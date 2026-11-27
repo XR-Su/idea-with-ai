@@ -31,6 +31,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [modeSettingsExpanded, setModeSettingsExpanded] = useState(true);
   const [tab, setTab] = useState<'chat' | 'plans'>('chat');
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -253,7 +254,7 @@ export default function App() {
           {!messageCount && <div className="chat-welcome"><p>你想创造什么，或者解决什么问题？</p><span>一个粗略的念头也足够开始。</span></div>}
           </div>
           <div ref={bottom} className="composer-area">
-            <section className="mode-settings" aria-label="对话模式设置">
+            <section id="conversation-mode-settings" className="mode-settings" aria-label="对话模式设置" hidden={!modeSettingsExpanded}>
               <div className="mode-controls">
                 <div className="mode-control">
                   <label htmlFor="thinking-mode">思维模式</label>
@@ -281,7 +282,15 @@ export default function App() {
             </section>
             <div className="composer">
               <textarea aria-label="会话输入" placeholder={active.mode === 'silent' ? '尽管写下来，AI 暂不回应…' : '继续说说你的想法…'} value={active.input} disabled={!!busy || !!storageError} onChange={e => update(active.id, i => ({ ...i, input: e.target.value }))} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} />
-              <div className="composer-footer"><span>{active.input.trim() ? '输入内容已在本地保存' : '⌘ / Ctrl + Enter 发送'}</span><button aria-label="发送消息" className="send-button" onClick={send} disabled={!active.input.trim() || !!busy || !!storageError}><ArrowUp size={20} /></button></div>
+              <div className="composer-footer">
+                <span>{active.input.trim() ? '输入内容已在本地保存' : '⌘ / Ctrl + Enter 发送'}</span>
+                <div className="composer-actions">
+                  <button className="mode-toggle" aria-label={`${modeSettingsExpanded ? '收起' : '展开'}模式设置，当前${thinkingModeLabel(active.thinkingMode)} · ${conversationModes.find(mode => mode.value === active.mode)?.label}`} title={modeSettingsExpanded ? '收起模式设置' : '展开模式设置'} aria-expanded={modeSettingsExpanded} aria-controls="conversation-mode-settings" onClick={() => setModeSettingsExpanded(expanded => !expanded)}>
+                    <Settings2 size={13} aria-hidden="true" /><span>{thinkingModeLabel(active.thinkingMode)} · {conversationModes.find(mode => mode.value === active.mode)?.label}</span>{modeSettingsExpanded ? <ChevronUp size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
+                  </button>
+                  <button aria-label="发送消息" className="send-button" onClick={send} disabled={!active.input.trim() || !!busy || !!storageError}><ArrowUp size={20} /></button>
+                </div>
+              </div>
             </div>
           </div>
         </section><aside className="context-panel"><div className="context-heading"><Leaf size={16} /><span>让想法向前一步</span></div><p>讨论会持续向前。归档保存阶段成果，不会结束会话。</p><div className="context-divider" /><h3>方案版本 <span>{active.versions.length}</span></h3>{active.versions.length ? [...active.versions].reverse().map(v => <button className="context-version" key={v.id} onClick={() => { setSelectedVersion(v.id); setTab('plans'); }}><span>V{v.number}</span><div><strong>{v.title}</strong><small>{timeLabel(v.createdAt)}</small></div><ArrowRight size={14} /></button>) : <div className="context-empty"><FileText size={27} strokeWidth={1.2} /><span>聊到一个阶段，<br />就留下一个方案版本。</span></div>}<div className="context-tip"><History size={15} /><p>旧版本可查看和编辑；所有新讨论都接在当前会话之后。</p></div></aside></div> : <section className="plans-page">{version ? <>
